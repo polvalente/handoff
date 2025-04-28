@@ -44,13 +44,13 @@ Below is the structured implementation plan for the Handout DAG executor library
 
 ## 6. Advanced Features
 
-- [ ] 6.1 Implement runtime monitoring (metrics via Telemetry, logging via Logger)
-- [ ] 6.2 Support dynamic resource updates at runtime
-- [ ] 6.3 Implement advanced allocation strategies (cost-optimized, time-optimized, domain-specific)
-- [ ] 6.4 Implement execution graph and resource usage visualization tools
-- [ ] 6.5 Conduct performance optimization and benchmarking
-- [ ] 6.1.1 Define and document Telemetry events and metrics namespace
-- [ ] 6.1.2 Establish logging conventions and Logger configuration
+- [x] 6.1 Implement runtime monitoring (metrics via Telemetry, logging via Logger)
+- [x] 6.2 Support dynamic resource updates at runtime
+- [x] 6.3 Implement advanced allocation strategies (cost-optimized, time-optimized, domain-specific)
+- [x] 6.4 Implement execution graph and resource usage visualization tools
+- [x] 6.5 Conduct performance optimization and benchmarking
+- [x] 6.1.1 Define and document Telemetry events and metrics namespace
+- [x] 6.1.2 Establish logging conventions and Logger configuration
 
 ## 7. Documentation & Examples
 

@@ -26,6 +26,7 @@ defmodule Handout.MixProject do
     [
       # Runtime dependencies
       {:telemetry, "~> 1.2"},
+      {:jason, "~> 1.4"},
 
       # Development and testing dependencies
       {:ex_doc, "~> 0.29.1", only: :dev, runtime: false},
