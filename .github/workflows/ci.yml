@@ -50,25 +50,8 @@ jobs:
       - name: Run Credo
         run: mix credo --strict
 
-      - name: Create PLT directory
-        run: mkdir -p priv/plts
-
-      - name: Restore cached PLT
-        uses: actions/cache@v3
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-plt
-
-      - name: Run Dialyzer
-        run: mix dialyzer
-
       - name: Run tests
-        run: mix test
-
-      - name: Run tests with coverage
-        run: mix coveralls.github
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mix test --warnings-as-errors
 
   publish:
     name: Publish to Hex

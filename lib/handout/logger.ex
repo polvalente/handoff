@@ -72,7 +72,7 @@ defmodule Handout.Logger do
 
     result_metadata =
       case result do
-        {:ok, value} -> [{:result_type, :ok} | metadata]
+        {:ok, _value} -> [{:result_type, :ok} | metadata]
         {:error, reason} -> [{:result_type, :error}, {:error_reason, reason} | metadata]
       end
 

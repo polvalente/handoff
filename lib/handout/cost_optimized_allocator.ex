@@ -104,7 +104,7 @@ defmodule Handout.CostOptimizedAllocator do
       # Find function IDs in args
       deps =
         Enum.filter(args, fn
-          {:ref, dep_id} -> true
+          {:ref, _dep_id} -> true
           _ -> false
         end)
         |> Enum.map(fn {:ref, dep_id} -> dep_id end)
@@ -122,7 +122,7 @@ defmodule Handout.CostOptimizedAllocator do
 
       # Calculate cost for each node
       node_function_costs =
-        Enum.map(caps, fn {node, node_caps} ->
+        Enum.map(caps, fn {node, _node_caps} ->
           # Get node's cost multiplier for this resource type (default to 1.0)
           cost_multiplier = Map.get(node_costs[node], :compute, 1.0)
 

@@ -31,7 +31,6 @@ defmodule Handout.Visualization do
   """
 
   alias Handout.Function
-  alias Handout.Telemetry
   alias Handout.Logger, as: HandoutLogger
 
   @doc """
@@ -49,8 +48,6 @@ defmodule Handout.Visualization do
   - String in DOT format
   """
   def dag_to_dot(dag, options \\ []) do
-    start_time = System.system_time()
-
     HandoutLogger.info("Generating DOT visualization", function_count: length(dag))
 
     # Set default options
@@ -125,8 +122,6 @@ defmodule Handout.Visualization do
   - HTML string containing the complete report
   """
   def generate_html_report(dag, allocations \\ %{}, execution_times \\ %{}, options \\ []) do
-    start_time = System.system_time()
-
     HandoutLogger.info("Generating HTML report", function_count: length(dag))
 
     # Generate the SVG using dot
@@ -281,7 +276,7 @@ defmodule Handout.Visualization do
     {color, fontcolor} =
       case get_execution_status(function) do
         :completed -> {colors.completed, "#ffffff"}
-        :running -> {colors.pending, "#000000"}
+        :pending -> {colors.pending, "#000000"}
         :failed -> {colors.failed, "#ffffff"}
         _ -> {colors.node, "#ffffff"}
       end
@@ -290,15 +285,17 @@ defmodule Handout.Visualization do
     label_parts = [function.id]
 
     # Add cost if enabled
-    if options[:show_costs] and function.cost do
-      label_parts = ["Cost: #{function.cost}" | label_parts]
-    end
+    label_parts =
+      if options[:show_costs] and function.cost do
+        ["Cost: #{function.cost}" | label_parts]
+      end
 
     # Add status if enabled
-    if options[:show_status] do
-      status = get_execution_status(function)
-      label_parts = ["Status: #{status}" | label_parts]
-    end
+    label_parts =
+      if options[:show_status] do
+        status = get_execution_status(function)
+        ["Status: #{status}" | label_parts]
+      end
 
     # Combine attributes
     [
@@ -319,14 +316,9 @@ defmodule Handout.Visualization do
   end
 
   defp dot_to_svg(dot_content) do
-    # This would typically use System.cmd to call Graphviz
-    # For simplicity, we'll use a placeholder here
-
     # In a real implementation:
-    # {svg, 0} = System.cmd("dot", ["-Tsvg"], stdin_data: dot_content)
-    # svg
-
-    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"800\" height=\"600\"><text x=\"10\" y=\"20\">SVG graph would be rendered here with Graphviz.</text></svg>"
+    {svg, 0} = System.cmd("dot", ["-Tsvg"], stdin_data: dot_content)
+    svg
   end
 
   defp generate_execution_stats(dag, execution_times) do

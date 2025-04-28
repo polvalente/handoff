@@ -26,9 +26,7 @@ defmodule Handout.Benchmarking do
   """
 
   alias Handout.Function
-  alias Handout.DAG
   alias Handout.Logger, as: HandoutLogger
-  alias Handout.Telemetry
 
   @doc """
   Generate a test DAG with specified size and complexity.
@@ -208,9 +206,6 @@ defmodule Handout.Benchmarking do
 
   # Create a layered DAG with specified parameters
   defp create_layered_dag(size, max_depth, max_width, max_deps, cost_range, resource_types) do
-    # Initialize with empty layers
-    layers = for _ <- 1..max_depth, do: []
-
     # Distribute functions across layers
     {functions_per_layer, remainder} = div_rem(size, max_depth)
     functions_per_layer = min(functions_per_layer, max_width)
@@ -228,24 +223,29 @@ defmodule Handout.Benchmarking do
     actual_size = min(size, distributed_size)
 
     # Adjust if we distributed too many
-    if distributed_size > actual_size do
-      {distributed_counts, _} =
-        Enum.reduce(max_depth..1, {distributed_counts, distributed_size - actual_size}, fn i,
-                                                                                           {counts,
-                                                                                            remaining} ->
-          if remaining > 0 do
-            current = Enum.at(counts, i - 1)
-            reduction = min(current - 1, remaining)
+    distributed_counts =
+      if distributed_size > actual_size do
+        {distributed_counts, _} =
+          Enum.reduce(max_depth..1, {distributed_counts, distributed_size - actual_size}, fn i,
+                                                                                             {counts,
+                                                                                              remaining} ->
+            if remaining > 0 do
+              current = Enum.at(counts, i - 1)
+              reduction = min(current - 1, remaining)
 
-            counts = List.update_at(counts, i - 1, fn _ -> current - reduction end)
-            remaining = remaining - reduction
+              counts = List.update_at(counts, i - 1, fn _ -> current - reduction end)
+              remaining = remaining - reduction
 
-            {counts, remaining}
-          else
-            {counts, 0}
-          end
-        end)
-    end
+              {counts, remaining}
+            else
+              {counts, 0}
+            end
+          end)
+
+        distributed_counts
+      else
+        distributed_counts
+      end
 
     # Generate functions layer by layer
     {functions, id_counter} =
@@ -307,7 +307,7 @@ defmodule Handout.Benchmarking do
         %Function{
           id: id,
           args: deps,
-          code: fn inputs -> {:ok, "result for #{id}"} end,
+          code: fn _inputs -> {:ok, "result for #{id}"} end,
           cost: cost,
           extra_args: extra_args
         }

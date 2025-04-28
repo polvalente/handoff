@@ -140,7 +140,7 @@ defmodule Handout.DistributedExecutor do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
     # Handle process termination
     case Map.get(state.monitored, pid) do
       nil ->
@@ -176,7 +176,7 @@ defmodule Handout.DistributedExecutor do
     # Keep only alive nodes
     alive_nodes =
       Enum.reduce(node_status, state.nodes, fn
-        {node, true}, acc ->
+        {_node, true}, acc ->
           acc
 
         {node, false}, acc ->
@@ -251,43 +251,63 @@ defmodule Handout.DistributedExecutor do
         end)
 
       # Execute ready functions
-      new_pending =
-        Enum.reduce(ready_functions, pending, fn function_id, pending_acc ->
+      {new_pending, new_to_be_executed, new_executed} =
+        Enum.reduce(ready_functions, {pending, to_be_executed, executed}, fn function_id,
+                                                                             {pending_acc,
+                                                                              to_be_executed_acc,
+                                                                              executed_acc} ->
           function = Map.get(dag.functions, function_id)
 
           # Prepare arguments from executed results
-          args = Enum.map(function.args, fn arg_id -> Map.get(executed, arg_id) end)
+          args = Enum.map(function.args, fn arg_id -> Map.get(executed_acc, arg_id) end)
 
           # Execute the function on the assigned node
           Logger.debug("Executing function #{function_id} on node #{inspect(function.node)}")
 
-          case execute_function_on_node(function, args, max_retries) do
-            {:ok, result} ->
-              # Store result and continue
-              ResultStore.store(function_id, result)
-              executed = Map.put(executed, function_id, result)
-              # Remove from to_be_executed
-              to_be_executed = MapSet.delete(to_be_executed, function_id)
+          try do
+            case execute_function_on_node(function, args, max_retries) do
+              {:ok, result} ->
+                # Store result and continue
+                case ResultStore.store(function_id, result) do
+                  :ok ->
+                    # Add to executed and remove from to_be_executed
+                    executed_acc = Map.put(executed_acc, function_id, result)
+                    to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                    {pending_acc, to_be_executed_acc, executed_acc}
 
-              # Continue with next functions
-              execute_functions_with_deps(
-                dag,
-                to_be_executed,
-                executed,
-                pending_acc,
-                max_retries
-              )
+                  {:error, reason} ->
+                    Logger.error(
+                      "Failed to store result for function #{function_id}: #{inspect(reason)}"
+                    )
 
-            {:async, _pid} ->
-              # Function is executing asynchronously
-              # Add to pending and remove from to_be_executed
-              to_be_executed = MapSet.delete(to_be_executed, function_id)
-              MapSet.put(pending_acc, function_id)
+                    executed_acc = Map.put(executed_acc, function_id, {:error, reason})
+                    to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                    {pending_acc, to_be_executed_acc, executed_acc}
+                end
+
+              {:async, _pid} ->
+                # Function is executing asynchronously
+                # Add to pending and remove from to_be_executed
+                to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                pending_acc = MapSet.put(pending_acc, function_id)
+                {pending_acc, to_be_executed_acc, executed_acc}
+
+              {:error, reason} ->
+                Logger.error("Failed to execute function #{function_id}: #{inspect(reason)}")
+                executed_acc = Map.put(executed_acc, function_id, {:error, reason})
+                to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                {pending_acc, to_be_executed_acc, executed_acc}
+            end
+          catch
+            kind, error ->
+              Logger.error("Exception when executing function #{function_id}: #{inspect(error)}")
+              executed_acc = Map.put(executed_acc, function_id, {:error, error})
+              to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+              {pending_acc, to_be_executed_acc, executed_acc}
           end
         end)
 
-      # Wait for any async functions to complete
-      # For a real implementation, we'd use message passing instead of polling
+      # Check for completed functions if there are any pending
       if MapSet.size(new_pending) > 0 do
         # Small delay to avoid tight polling
         :timer.sleep(100)
@@ -296,32 +316,48 @@ defmodule Handout.DistributedExecutor do
         {still_pending, newly_executed} =
           Enum.reduce(new_pending, {MapSet.new(), %{}}, fn function_id,
                                                            {pending_acc, executed_acc} ->
-            case ResultStore.get(function_id) do
-              {:ok, result} ->
-                # Function completed
-                {pending_acc, Map.put(executed_acc, function_id, result)}
+            try do
+              case ResultStore.get(function_id) do
+                {:ok, result} ->
+                  # Function completed
+                  {pending_acc, Map.put(executed_acc, function_id, result)}
 
-              {:error, :not_found} ->
-                # Still pending
-                {MapSet.put(pending_acc, function_id), executed_acc}
+                {:error, :not_found} ->
+                  # Still pending
+                  {MapSet.put(pending_acc, function_id), executed_acc}
+
+                {:error, reason} ->
+                  # Error occurred
+                  Logger.error("Error retrieving result for #{function_id}: #{inspect(reason)}")
+                  {pending_acc, Map.put(executed_acc, function_id, {:error, reason})}
+              end
+            catch
+              kind, error ->
+                Logger.error(
+                  "Exception when checking for function #{function_id}: #{inspect(error)}"
+                )
+
+                {pending_acc, Map.put(executed_acc, function_id, {:error, error})}
             end
           end)
 
         # Continue execution with updated state
         execute_functions_with_deps(
           dag,
-          to_be_executed,
-          Map.merge(executed, newly_executed),
+          new_to_be_executed,
+          Map.merge(new_executed, newly_executed),
           still_pending,
           max_retries
         )
       else
-        # No pending functions, but still functions to execute
-        if MapSet.size(to_be_executed) > 0 do
-          execute_functions_with_deps(dag, to_be_executed, executed, new_pending, max_retries)
-        else
-          executed
-        end
+        # No pending functions, continue with updated state
+        execute_functions_with_deps(
+          dag,
+          new_to_be_executed,
+          new_executed,
+          new_pending,
+          max_retries
+        )
       end
     end
   end

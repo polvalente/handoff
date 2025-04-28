@@ -47,8 +47,6 @@ defmodule Handout.DistributedResultStore do
   - {:error, :timeout} if the result is not available within the timeout
   """
   def get_with_timeout(function_id, timeout \\ 5000) do
-    ref = make_ref()
-
     # Start a task to wait for the result
     task =
       Task.async(fn ->

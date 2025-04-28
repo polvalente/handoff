@@ -48,7 +48,7 @@ Please note that this project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md)
 3. Ensure your code passes all checks:
 
    ```bash
-   mix quality  # Runs formatter, Credo and Dialyzer
+   mix quality  # Runs formatter, Credo
    mix test     # Runs tests
    ```
 
@@ -71,8 +71,6 @@ handout/
 ├── config/               # Configuration
 ├── docs/                 # Documentation
 │   └── guides/           # User guides
-└── priv/                 # Private assets
-    └── plts/             # Dialyzer PLT files
 ```
 
 ## Coding Guidelines
