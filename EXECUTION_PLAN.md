@@ -21,10 +21,10 @@ Below is the structured implementation plan for the Handout DAG executor library
 
 ## 3. Execution Engine (Single-node)
 
-- [ ] 3.1 Define supervision tree hierarchy
-- [ ] 3.2 Implement executor scheduling and dependency resolution logic
-- [ ] 3.3 Implement result storage and retrieval mechanisms
-- [ ] 3.4 Write single-node execution test suite
+- [x] 3.1 Define supervision tree hierarchy
+- [x] 3.2 Implement executor scheduling and dependency resolution logic
+- [x] 3.3 Implement result storage and retrieval mechanisms
+- [x] 3.4 Write single-node execution test suite
 
 ## 4. Resource Management
 
