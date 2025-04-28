@@ -28,11 +28,11 @@ Below is the structured implementation plan for the Handout DAG executor library
 
 ## 4. Resource Management
 
-- [ ] 4.1 Define `DistributedExecutor.ResourceTracker` behavior
-- [ ] 4.2 Define `DistributedExecutor.Allocator` behavior
-- [ ] 4.3 Implement static resource registration and availability checking
-- [ ] 4.4 Implement simple allocation strategies (first-available, load-balanced)
-- [ ] 4.5 Extend tests for resource-aware execution
+- [x] 4.1 Define `DistributedExecutor.ResourceTracker` behavior
+- [x] 4.2 Define `DistributedExecutor.Allocator` behavior
+- [x] 4.3 Implement static resource registration and availability checking
+- [x] 4.4 Implement simple allocation strategies (first-available, load-balanced)
+- [x] 4.5 Extend tests for resource-aware execution
 
 ## 5. Multi-node Distribution
 

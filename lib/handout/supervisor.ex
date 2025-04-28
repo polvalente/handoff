@@ -14,8 +14,9 @@ defmodule Handout.Supervisor do
   @impl true
   def init(_opts) do
     children = [
-      {Handout.Executor, []},
-      {Handout.ResultStore, []}
+      {Handout.ResultStore, []},
+      {Handout.SimpleResourceTracker, []},
+      {Handout.Executor, []}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

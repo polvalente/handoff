@@ -6,7 +6,7 @@ defmodule Handout.Executor do
   """
 
   use GenServer
-  alias Handout.{DAG, ResultStore}
+  alias Handout.{DAG, ResultStore, SimpleAllocator, SimpleResourceTracker}
 
   # Client API
 
@@ -20,6 +20,8 @@ defmodule Handout.Executor do
   ## Parameters
   - dag: A validated DAG to execute
   - opts: Optional execution options
+    - :allocation_strategy - Strategy for allocating functions to nodes
+      (:first_available or :load_balanced, defaults to :first_available)
 
   ## Returns
   - {:ok, results} with a map of function IDs to results on success
@@ -40,9 +42,20 @@ defmodule Handout.Executor do
   end
 
   @impl true
-  def handle_call({:execute, dag, _opts}, _from, state) do
+  def handle_call({:execute, dag, opts}, _from, state) do
     # Clear any previous results
     ResultStore.clear()
+
+    # Get node capabilities
+    # For now, we're just using the local node
+    node_caps = %{Node.self() => %{cpu: 8, memory: 4000}}
+
+    # Allocate functions to nodes
+    allocation_strategy = Keyword.get(opts, :allocation_strategy, :first_available)
+    allocations = allocate_functions(dag, node_caps, allocation_strategy)
+
+    # Update dag functions with node assignments
+    dag = assign_nodes_to_functions(dag, allocations)
 
     # Execute functions in topological order
     topo_sorted = topological_sort(dag)
@@ -54,11 +67,21 @@ defmodule Handout.Executor do
 
         case execute_function(function, results_acc) do
           {:ok, result} ->
+            # Release resources if function has a cost
+            if function.cost && function.node do
+              SimpleResourceTracker.release(function.node, function.cost)
+            end
+
             # Store result in ETS and accumulator
             ResultStore.store(function_id, result)
             {:cont, Map.put(results_acc, function_id, result)}
 
           {:error, reason} ->
+            # Release resources on error too
+            if function.cost && function.node do
+              SimpleResourceTracker.release(function.node, function.cost)
+            end
+
             {:halt, {:error, reason}}
         end
       end)
@@ -70,6 +93,27 @@ defmodule Handout.Executor do
   end
 
   # Private functions
+
+  # Allocate functions to nodes based on resource requirements
+  defp allocate_functions(dag, node_caps, allocation_strategy) do
+    # Get list of functions from the DAG
+    functions = Map.values(dag.functions)
+
+    # Use allocator to get node assignments
+    SimpleAllocator.allocate(functions, node_caps, allocation_strategy)
+  end
+
+  # Assign nodes to functions based on allocation result
+  defp assign_nodes_to_functions(dag, allocations) do
+    updated_functions =
+      Enum.reduce(allocations, dag.functions, fn {function_id, node}, acc ->
+        Map.update!(acc, function_id, fn function ->
+          %{function | node: node}
+        end)
+      end)
+
+    %{dag | functions: updated_functions}
+  end
 
   # Sorts functions in topological order (dependencies first)
   defp topological_sort(dag) do
@@ -110,6 +154,19 @@ defmodule Handout.Executor do
 
   # Executes a single function, resolving its dependencies
   defp execute_function(function, results_acc) do
+    # Request resources if function has a cost
+    if function.cost && function.node do
+      case SimpleResourceTracker.request(function.node, function.cost) do
+        :ok ->
+          # Resources allocated, continue
+          :ok
+
+        {:error, :resources_unavailable} ->
+          # Could not allocate resources
+          {:error, {:resources_unavailable, function.id, function.node}}
+      end
+    end
+
     # Get argument values from results
     args =
       Enum.map(function.args, fn arg_id ->
