@@ -1,20 +1,17 @@
 # Handout
 
-A general-purpose library for executing directed acyclic graphs (DAGs) of functions across distributed Erlang nodes.
+Handout is a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
 
-## Overview
+## Features
 
-Handout provides a framework for defining function dependencies, resource requirements, and allocation strategies to optimize execution based on available resources. It enables you to:
-
-- Create flexible systems for distributing computational workloads across BEAM nodes
-- Support custom resource tracking and allocation strategies
-- Provide optimized execution of interdependent functions
-- Maintain independence from specific application domains while supporting specialization
+- **Graph-based computation**: Define and execute complex computational graphs with dependencies.
+- **Resource-aware scheduling**: Optimize computation based on available resources.
+- **Distributed execution**: Run graph workloads across multiple nodes.
+- **Fault tolerance**: Automatically handle node failures and task retries.
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `handout` to your list of dependencies in `mix.exs`:
+The package can be installed by adding `handout` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -26,79 +23,73 @@ end
 
 ## Usage
 
-### Basic Example
+### Basic DAG Construction
+
+Here's a simple example of how to create and validate a DAG:
 
 ```elixir
-# Define functions with their dependencies
-functions = [
-  Handout.function(:load_data, &MyModule.load_data/1),
-  Handout.function(:process_data, &MyModule.process_data/1, args: [{:load_data, 0}]),
-  Handout.function(:output_results, &MyModule.output_results/1, args: [{:process_data, 0}])
-]
+alias Handout.{DAG, Function}
 
-# Execute the graph
-{:ok, executor} = Handout.execute(functions)
+# Create a new empty DAG
+dag = Handout.new()
 
-# Wait for all functions to complete
-results = Handout.await_completion(executor)
+# Define a source function with no dependencies
+source_fn = %Function{
+  id: :source,
+  args: [],
+  code: fn -> 42 end
+}
 
-# Access specific results
-final_output = Handout.get_result(executor, :output_results)
+# Define a function that depends on the source function
+transform_fn = %Function{
+  id: :transform,
+  args: [:source],
+  code: fn results -> results[:source] * 2 end
+}
+
+# Define a sink function that depends on the transform function
+sink_fn = %Function{
+  id: :sink,
+  args: [:transform],
+  code: fn results -> "The answer is: #{results[:transform]}" end
+}
+
+# Add functions to the DAG
+dag =
+  dag
+  |> DAG.add_function(source_fn)
+  |> DAG.add_function(transform_fn)
+  |> DAG.add_function(sink_fn)
+
+# Validate the DAG to ensure it has no cycles and all dependencies exist
+{:ok, valid_dag} = DAG.validate(dag)
+
+# TODO: Execute the DAG (implementation coming soon)
 ```
 
-### Resource-Aware Execution
+### Distributed Execution (Coming Soon)
 
 ```elixir
-# Define functions with costs
-functions = [
-  Handout.function(:load_data, &MyModule.load_data/1, 
-    cost: %{memory: 2000, cpu_intensive: false}),
-  Handout.function(:process_data, &MyModule.process_data/1, 
-    args: [{:load_data, 0}], 
-    cost: %{memory: 500, gpu_memory: 1000, cpu_intensive: true}),
-  Handout.function(:output_results, &MyModule.output_results/1, 
-    args: [{:process_data, 0}], 
-    cost: %{memory: 200, cpu_intensive: false})
-]
+# Define resource requirements for functions
+cpu_intensive_fn = %Function{
+  id: :cpu_heavy,
+  args: [:source],
+  code: fn results -> heavy_computation(results[:source]) end,
+  cost: %{cpu: 4, memory: 2}  # Requires 4 CPU cores and 2GB memory
+}
 
-# Define resource specifications
-resources = [
-  %{
-    node: :"node1@example.com",
-    capabilities: %{memory: 8000, gpu_memory: 0, has_cuda: false}
-  },
-  %{
-    node: :"node2@example.com",
-    capabilities: %{memory: 4000, gpu_memory: 4000, has_cuda: true}
-  }
-]
-
-# Define allocation strategy (optional)
-allocator = MyCustomAllocator
-
-# Execute the graph
-{:ok, executor} = Handout.execute(functions, resources: resources, allocator: allocator)
+# Execute with resource-aware scheduling across nodes
+# TODO: Execution API coming soon
 ```
 
 ## Documentation
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc):
+Documentation will be available at [https://hexdocs.pm/handout](https://hexdocs.pm/handout) once published.
 
-```
-mix docs
-```
+## Contributing
 
-Once published, the docs can be found at <https://hexdocs.pm/handout>.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-## Features
+## License
 
-- **Function Dependency Resolution**: Automatically resolve and manage dependencies between functions
-- **Resource Allocation**: Allocate functions to nodes based on resource requirements and availability
-- **Distribution**: Execute functions across distributed Erlang nodes
-- **Customizable Allocation Strategies**: Implement custom allocation strategies
-- **Fault Tolerance**: Handle node and function execution failures
-
-## Status
-
-This project is currently in active development. See the PROJECT_MANIFEST.md file for the full implementation roadmap.
-
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
