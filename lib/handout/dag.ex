@@ -1,12 +1,89 @@
 defmodule Handout.DAG do
   @moduledoc """
   Provides functionality for building and validating directed acyclic graphs (DAGs) of functions.
+
+  This module is the core of the Handout library, allowing you to:
+
+  1. Create empty computation graphs
+  2. Add functions to the graph with their dependencies
+  3. Validate the graph for correctness before execution
+
+  ## DAG Structure
+
+  A DAG in Handout is represented as a map with:
+
+  * `:functions` - A map of function IDs to `Handout.Function` structs
+  * `:dependencies` - A map tracking which functions depend on which others
+
+  ## Examples
+
+  ```elixir
+  # Create a new DAG
+  dag = Handout.DAG.new()
+
+  # Define functions
+  source = %Handout.Function{
+    id: :data_source,
+    args: [],
+    code: fn -> [1, 2, 3, 4, 5] end
+  }
+
+  transform = %Handout.Function{
+    id: :transform,
+    args: [:data_source],
+    code: fn %{data_source: data} -> Enum.map(data, &(&1 * 2)) end
+  }
+
+  aggregation = %Handout.Function{
+    id: :aggregate,
+    args: [:transform],
+    code: fn %{transform: data} -> Enum.sum(data) end
+  }
+
+  # Build the DAG
+  dag =
+    dag
+    |> Handout.DAG.add_function(source)
+    |> Handout.DAG.add_function(transform)
+    |> Handout.DAG.add_function(aggregation)
+
+  # Validate the DAG
+  case Handout.DAG.validate(dag) do
+    {:ok, validated_dag} ->
+      # DAG is valid and ready for execution
+      IO.puts("DAG is valid")
+
+    {:error, {:missing_dependencies, missing}} ->
+      IO.puts("DAG has missing dependencies: \#{inspect(missing)}")
+
+    {:error, {:cycle_detected, cycle}} ->
+      IO.puts("DAG contains a cycle at: \#{inspect(cycle)}")
+  end
+  ```
+
+  ## Validation
+
+  The `validate/1` function performs two critical checks:
+
+  1. It ensures all dependencies reference existing functions
+  2. It detects cycles in the graph using depth-first search
+
+  A valid DAG is required before execution.
   """
 
   alias Handout.Function
 
   @doc """
   Creates a new empty DAG.
+
+  Returns a map with empty `:functions` and `:dependencies` maps that can be
+  populated using `add_function/2`.
+
+  ## Example
+
+  ```elixir
+  dag = Handout.DAG.new()
+  ```
   """
   def new do
     %{
@@ -23,7 +100,19 @@ defmodule Handout.DAG do
   - function: A Handout.Function struct to add to the DAG
 
   ## Returns
-  - Updated DAG with the function added
+  - Updated DAG with the function added and dependencies tracked
+
+  ## Example
+
+  ```elixir
+  dag =
+    Handout.DAG.new()
+    |> Handout.DAG.add_function(%Handout.Function{
+      id: :source,
+      args: [],
+      code: fn -> :rand.uniform(100) end
+    })
+  ```
   """
   def add_function(dag, %Function{} = function) do
     updated_functions = Map.put(dag.functions, function.id, function)
@@ -47,7 +136,22 @@ defmodule Handout.DAG do
 
   ## Returns
   - {:ok, dag} if the DAG is valid
-  - {:error, reason} if the DAG is invalid
+  - {:error, {:missing_dependencies, list}} if references to non-existent functions exist
+  - {:error, {:cycle_detected, id}} if a cycle is found in the graph
+
+  ## Example
+
+  ```elixir
+  case Handout.DAG.validate(dag) do
+    {:ok, validated_dag} ->
+      # DAG is valid and ready for execution
+      Handout.execute(validated_dag)
+
+    {:error, reason} ->
+      # Handle the validation error
+      IO.puts("DAG validation failed: \#{inspect(reason)}")
+  end
+  ```
   """
   def validate(dag) do
     with :ok <- validate_dependencies_exist(dag),
