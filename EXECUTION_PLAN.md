@@ -36,11 +36,11 @@ Below is the structured implementation plan for the Handout DAG executor library
 
 ## 5. Multi-node Distribution
 
-- [ ] 5.1 Implement node discovery and capability registration
-- [ ] 5.2 Implement inter-node messaging and coordination
-- [ ] 5.3 Implement remote task dispatch and result synchronization
-- [ ] 5.4 Implement failure detection, process monitoring, and retry strategies
-- [ ] 5.5 Write distributed execution test suite
+- [x] 5.1 Implement node discovery and capability registration
+- [x] 5.2 Implement inter-node messaging and coordination
+- [x] 5.3 Implement remote task dispatch and result synchronization
+- [x] 5.4 Implement failure detection, process monitoring, and retry strategies
+- [x] 5.5 Write distributed execution test suite
 
 ## 6. Advanced Features
 

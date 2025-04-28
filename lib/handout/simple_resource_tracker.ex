@@ -37,6 +37,18 @@ defmodule Handout.SimpleResourceTracker do
     GenServer.call(__MODULE__, {:release, node, req})
   end
 
+  @doc """
+  Returns the capabilities of the local node.
+
+  Used for remote calls from other nodes to discover this node's capabilities.
+
+  ## Returns
+  - Map of resource capabilities
+  """
+  def get_capabilities do
+    GenServer.call(__MODULE__, :get_capabilities)
+  end
+
   # Server callbacks
 
   @impl GenServer
@@ -117,6 +129,18 @@ defmodule Handout.SimpleResourceTracker do
         Logger.debug("Released resources on node #{inspect(node)}: #{inspect(req)}")
 
         {:reply, :ok, %{state | nodes: nodes}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:get_capabilities, _from, state) do
+    # Get capabilities of local node (Node.self())
+    case Map.get(state.nodes, Node.self()) do
+      nil ->
+        {:reply, %{}, state}
+
+      %{full: full_caps} ->
+        {:reply, full_caps, state}
     end
   end
 

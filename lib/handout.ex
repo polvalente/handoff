@@ -18,8 +18,8 @@ defmodule Handout do
 
   Must be called before executing any DAGs.
   """
-  def start do
-    Handout.Supervisor.start_link([])
+  def start(opts \\ []) do
+    Handout.Supervisor.start_link(opts)
   end
 
   @doc """
@@ -36,7 +36,26 @@ defmodule Handout do
   - {:error, reason} on failure
   """
   def execute(dag, opts \\ []) do
+    # Use the local executor by default
     Handout.Executor.execute(dag, opts)
+  end
+
+  @doc """
+  Executes all functions in a DAG across multiple nodes, respecting dependencies.
+
+  ## Parameters
+  - dag: The DAG to execute
+  - opts: Optional execution settings
+    - :allocation_strategy - Strategy for allocating functions to nodes
+      (:first_available or :load_balanced, defaults to :first_available)
+    - :max_retries - Maximum number of times to retry failed functions (default: 3)
+
+  ## Returns
+  - {:ok, results} with a map of function IDs to results on success
+  - {:error, reason} on failure
+  """
+  def execute_distributed(dag, opts \\ []) do
+    Handout.DistributedExecutor.execute(dag, opts)
   end
 
   @doc """
@@ -53,6 +72,31 @@ defmodule Handout do
   """
   def register_node(node, caps) do
     Handout.SimpleResourceTracker.register(node, caps)
+  end
+
+  @doc """
+  Discovers and registers nodes in the cluster with their capabilities.
+
+  ## Returns
+  - {:ok, discovered} with a map of node names to their capabilities
+  """
+  def discover_nodes do
+    Handout.DistributedExecutor.discover_nodes()
+  end
+
+  @doc """
+  Registers the local node with its capabilities for distributed execution.
+
+  ## Parameters
+  - caps: Map of capabilities provided by this node
+
+  ## Example
+  ```
+  Handout.register_local_node(%{cpu: 8, memory: 16000})
+  ```
+  """
+  def register_local_node(caps) do
+    Handout.DistributedExecutor.register_local_node(caps)
   end
 
   @doc """
@@ -73,5 +117,32 @@ defmodule Handout do
   """
   def resources_available?(node, req) do
     Handout.SimpleResourceTracker.available?(node, req)
+  end
+
+  @doc """
+  Stores a function result and broadcasts it to all connected nodes.
+
+  ## Parameters
+  - function_id: The ID of the function
+  - result: The result to store
+  - origin_node: The node where the result was produced (defaults to current node)
+  """
+  def store_result(function_id, result, origin_node \\ Node.self()) do
+    Handout.DistributedResultStore.store_distributed(function_id, result, origin_node)
+  end
+
+  @doc """
+  Retrieves a result, potentially waiting for it to be available.
+
+  ## Parameters
+  - function_id: The ID of the function
+  - timeout: Maximum time to wait in milliseconds, defaults to 5000
+
+  ## Returns
+  - {:ok, result} on success
+  - {:error, :timeout} if the result is not available within the timeout
+  """
+  def get_result(function_id, timeout \\ 5000) do
+    Handout.DistributedResultStore.get_with_timeout(function_id, timeout)
   end
 end
