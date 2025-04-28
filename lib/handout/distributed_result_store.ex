@@ -47,37 +47,38 @@ defmodule Handout.DistributedResultStore do
   - {:error, :timeout} if the result is not available within the timeout
   """
   def get_with_timeout(function_id, timeout \\ 5000) do
-    ref = make_ref()
-
     # Start a task to wait for the result
     task =
       Task.async(fn ->
-        start = System.monotonic_time(:millisecond)
-
-        Stream.unfold(start, fn acc ->
-          case ResultStore.get(function_id) do
-            {:ok, result} ->
-              {:halt, {:ok, result}}
-
-            {:error, :not_found} ->
-              now = System.monotonic_time(:millisecond)
-
-              if now - start > timeout do
-                {:halt, {:error, :timeout}}
-              else
-                # Wait a bit before trying again
-                :timer.sleep(100)
-                {nil, acc}
-              end
-          end
-        end)
-        |> Stream.run()
+        wait_for_result(function_id, timeout)
       end)
 
     # Wait for the result or timeout
-    case Task.await(task, timeout + 500) do
-      {:ok, result} -> {:ok, result}
-      other -> other
+    Task.await(task, timeout + 500)
+  end
+
+  defp wait_for_result(function_id, timeout) do
+    start = System.monotonic_time(:millisecond)
+    wait_loop(function_id, start, timeout)
+  end
+
+  defp wait_loop(function_id, start, timeout) do
+    case ResultStore.get(function_id) do
+      {:ok, result} ->
+        # Result found
+        {:ok, result}
+
+      {:error, :not_found} ->
+        # Check if we've exceeded timeout
+        now = System.monotonic_time(:millisecond)
+
+        if now - start > timeout do
+          {:error, :timeout}
+        else
+          # Wait a bit and try again
+          :timer.sleep(100)
+          wait_loop(function_id, start, timeout)
+        end
     end
   end
 

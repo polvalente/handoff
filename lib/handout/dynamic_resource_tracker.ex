@@ -116,8 +116,6 @@ defmodule Handout.DynamicResourceTracker do
 
   @impl GenServer
   def handle_call({:register, node, caps}, _from, state) do
-    start_time = System.system_time()
-
     # Store the full capacity
     full_caps = caps
 
@@ -213,8 +211,6 @@ defmodule Handout.DynamicResourceTracker do
 
   @impl GenServer
   def handle_call({:release, node, req}, _from, state) do
-    start_time = System.system_time()
-
     case Map.get(state.nodes, node) do
       nil ->
         {:reply, :ok, state}
