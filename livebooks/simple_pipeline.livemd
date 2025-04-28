@@ -1,9 +1,26 @@
-#!/usr/bin/env elixir
-# Simple data processing pipeline example using Handout
+# Simple Data Pipeline Example
 
-# Ensure we can access the Handout library
-Code.require_file("../../lib/handout.ex")
+## Introduction
 
+This example demonstrates using Handout to build a simple data processing pipeline. The pipeline processes random data through a series of transformation steps, showing how to construct and execute a directed acyclic graph (DAG) of operations.
+
+## Setup
+
+First, let's make sure the Handout library is available:
+
+```elixir
+# If you're running this in the Handout project directory:
+Mix.install([]) # No additional dependencies needed
+
+# If you're running this separately, you'd need:
+# Mix.install([
+#   {:handout, git: "https://github.com/your-username/handout.git"}
+# ])
+```
+
+## Statistics Helper Module
+
+```elixir
 defmodule Stats do
   @moduledoc """
   Simple statistics helpers for the pipeline example
@@ -30,13 +47,23 @@ defmodule Stats do
     :math.sqrt(variance)
   end
 end
+```
 
+## Starting Handout
+
+```elixir
 # Start Handout
 {:ok, _pid} = Handout.start()
 
 # Create a new DAG
 dag = Handout.new()
+```
 
+## Building the Pipeline
+
+Let's define each step in our data pipeline:
+
+```elixir
 alias Handout.Function
 
 # Step 1: Generate random data
@@ -115,7 +142,11 @@ format_fn = %Function{
     """
   end
 }
+```
 
+## Assembling and Executing the DAG
+
+```elixir
 # Build the DAG
 dag =
   dag
@@ -143,3 +174,39 @@ case Handout.DAG.validate(dag) do
   {:error, reason} ->
     IO.puts("Invalid DAG: #{inspect(reason)}")
 end
+```
+
+## Experiment: Modifying Parameters
+
+Try changing the parameters to see how they affect the results:
+
+```elixir
+# Create a new DAG with different parameters
+modified_dag = Handout.new()
+
+# Use the same functions but modify extra_args
+modified_filter_fn = %{filter_fn | extra_args: [50]} # Higher threshold
+modified_transform_fn = %{transform_fn | extra_args: [:sqrt]} # Different operation
+
+# Rebuild the DAG
+modified_dag =
+  modified_dag
+  |> Handout.DAG.add_function(generate_fn)
+  |> Handout.DAG.add_function(modified_filter_fn)
+  |> Handout.DAG.add_function(modified_transform_fn)
+  |> Handout.DAG.add_function(aggregate_fn)
+  |> Handout.DAG.add_function(format_fn)
+
+# Execute the modified DAG
+{:ok, valid_dag} = Handout.DAG.validate(modified_dag)
+{:ok, results} = Handout.execute(valid_dag)
+IO.puts(results[:format_output])
+```
+
+## Key Concepts Demonstrated
+
+- Basic DAG construction
+- Function dependencies
+- Result passing between functions
+- Error handling
+- Parameterization via extra_args

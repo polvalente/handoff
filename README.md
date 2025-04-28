@@ -82,6 +82,15 @@ cpu_intensive_fn = %Function{
 # TODO: Execution API coming soon
 ```
 
+## Interactive Examples
+
+We provide interactive [Livebook](https://livebook.dev/) examples to help you get started:
+
+- **Simple Pipeline** - A basic data processing pipeline showing core concepts
+- **Distributed Image Processing** - A complex example with resource-aware distributed execution
+
+Check out the [`livebooks/`](livebooks/) directory for these interactive notebooks.
+
 ## Documentation
 
 Documentation will be available at [https://hexdocs.pm/handout](https://hexdocs.pm/handout) once published.
