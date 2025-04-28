@@ -226,7 +226,24 @@ defmodule Handout.DistributedExecutor do
           max_retries
         )
 
-      GenServer.reply(caller, {:ok, results})
+      # Check if any function failed due to resource constraints
+      resource_errors =
+        Enum.filter(results, fn {_id, result} ->
+          case result do
+            {:error, %RuntimeError{message: message}} ->
+              String.contains?(message, "Resources unavailable")
+
+            _ ->
+              false
+          end
+        end)
+
+      if Enum.empty?(resource_errors) do
+        GenServer.reply(caller, {:ok, results})
+      else
+        # If any function failed due to resource constraints, return error
+        GenServer.reply(caller, {:error, "Resource constraints not satisfied"})
+      end
     catch
       err ->
         GenServer.reply(caller, {:error, err})
@@ -268,22 +285,11 @@ defmodule Handout.DistributedExecutor do
             case execute_function_on_node(function, args, max_retries) do
               {:ok, result} ->
                 # Store result and continue
-                case ResultStore.store(function_id, result) do
-                  :ok ->
-                    # Add to executed and remove from to_be_executed
-                    executed_acc = Map.put(executed_acc, function_id, result)
-                    to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-                    {pending_acc, to_be_executed_acc, executed_acc}
-
-                  {:error, reason} ->
-                    Logger.error(
-                      "Failed to store result for function #{function_id}: #{inspect(reason)}"
-                    )
-
-                    executed_acc = Map.put(executed_acc, function_id, {:error, reason})
-                    to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-                    {pending_acc, to_be_executed_acc, executed_acc}
-                end
+                :ok = ResultStore.store(function_id, result)
+                # Add to executed and remove from to_be_executed
+                executed_acc = Map.put(executed_acc, function_id, result)
+                to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                {pending_acc, to_be_executed_acc, executed_acc}
 
               {:async, _pid} ->
                 # Function is executing asynchronously
@@ -299,7 +305,7 @@ defmodule Handout.DistributedExecutor do
                 {pending_acc, to_be_executed_acc, executed_acc}
             end
           catch
-            kind, error ->
+            _kind, error ->
               Logger.error("Exception when executing function #{function_id}: #{inspect(error)}")
               executed_acc = Map.put(executed_acc, function_id, {:error, error})
               to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
@@ -332,7 +338,7 @@ defmodule Handout.DistributedExecutor do
                   {pending_acc, Map.put(executed_acc, function_id, {:error, reason})}
               end
             catch
-              kind, error ->
+              _kind, error ->
                 Logger.error(
                   "Exception when checking for function #{function_id}: #{inspect(error)}"
                 )
@@ -419,7 +425,11 @@ defmodule Handout.DistributedExecutor do
           end
 
         {:error, :resources_unavailable} ->
-          raise "Resources unavailable for function #{function.id} on node #{function.node}"
+          # Return an error instead of raising
+          {:error,
+           %RuntimeError{
+             message: "Resources unavailable for function #{function.id} on node #{function.node}"
+           }}
       end
     else
       # No resource requirements, just execute
