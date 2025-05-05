@@ -77,20 +77,9 @@ end
 
 ### Built-in Resource Trackers
 
-Handout provides two built-in resource trackers:
+Handout provides one built-in resource tracker:
 
 1. `Handout.SimpleResourceTracker`: Basic static resource tracking
-2. `Handout.DynamicResourceTracker`: Supports runtime resource updates
-
-To use the dynamic tracker:
-
-```elixir
-# Start Handout with the dynamic resource tracker
-Handout.start(resource_tracker: Handout.DynamicResourceTracker)
-
-# Update resources at runtime
-Handout.update_node_resources(Node.self(), %{cpu: 16, memory: 32000})
-```
 
 ## Custom Resource Trackers
 

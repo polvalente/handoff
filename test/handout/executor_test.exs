@@ -130,5 +130,24 @@ defmodule Handout.ExecutorTest do
 
       assert {:error, {:cycle_detected, _}} = Executor.execute(dag)
     end
+
+    @tag :skip
+    test "can fetch a single element from an argument" do
+      assert {:ok, results} =
+               DAG.new()
+               |> DAG.add_function(%Function{id: :arg0, args: [], code: fn -> [1, 2, 3] end})
+               |> DAG.add_function(%Function{id: :arg1, args: [], code: fn -> [[10, 20, 30]] end})
+               |> DAG.add_function(%Function{
+                 id: :zip,
+                 args: [{:fetch, :arg0, 0}, {:fetch, :arg0, 1}, {:fetch, :arg1, 0}],
+                 code: fn arg00, arg01, arg10, offset ->
+                   Enum.map(arg10, fn x -> x + arg00 + arg01 + offset end)
+                 end,
+                 extra_args: [offset: 10]
+               })
+               |> Handout.execute()
+
+      assert results == %{arg0: [1, 2, 3], arg1: [[10, 20, 30]], zip: [23, 33, 43]}
+    end
   end
 end
