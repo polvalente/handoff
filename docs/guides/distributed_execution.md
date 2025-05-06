@@ -79,10 +79,10 @@ dag =
   |> Handout.DAG.add_function(gpu_fn)
   |> Handout.DAG.add_function(aggregation_fn)
 
-{:ok, valid_dag} = Handout.DAG.validate(dag)
+:ok = Handout.DAG.validate(dag)
 
 # Execute the DAG across the cluster
-{:ok, results} = Handout.execute_distributed(valid_dag,
+{:ok, results} = Handout.execute_distributed(dag,
   allocation_strategy: :load_balanced,
   max_retries: 3
 )

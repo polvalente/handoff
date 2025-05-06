@@ -426,11 +426,11 @@ defmodule DistributedImageProcessing do
 
     # Validate the DAG
     case Handout.DAG.validate(dag) do
-      {:ok, valid_dag} ->
+      :ok ->
         IO.puts("\nExecuting distributed image processing pipeline...\n")
 
         # Execute the DAG across all available nodes
-        case Handout.execute_distributed(valid_dag,
+        case Handout.execute_distributed(dag,
           allocation_strategy: :cost_optimized,
           max_retries: 2
         ) do

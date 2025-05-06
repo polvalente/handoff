@@ -47,7 +47,7 @@ defmodule Handout.DistributedExecutor do
   """
   def execute(dag, opts \\ []) do
     case DAG.validate(dag) do
-      {:ok, _} -> GenServer.call(__MODULE__, {:execute, dag, opts}, :infinity)
+      :ok -> GenServer.call(__MODULE__, {:execute, dag, opts}, :infinity)
       error -> error
     end
   end

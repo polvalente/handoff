@@ -73,7 +73,7 @@ dag =
   |> Handout.DAG.add_function(aggregate_fn)
 
 # Validate the DAG
-{:ok, valid_dag} = Handout.DAG.validate(dag)
+:ok = Handout.DAG.validate(dag)
 ```
 
 ### Executing the DAG
@@ -118,11 +118,11 @@ invalid_dag =
   })
 
 case Handout.DAG.validate(invalid_dag) do
-  {:ok, _} ->
+  :ok ->
     IO.puts("DAG is valid")
 
-  {:error, {:missing_dependencies, missing}} ->
-    IO.puts("DAG has missing dependencies: #{inspect(missing)}")
+  {:error, {:missing_function, missing}} ->
+    IO.puts("DAG has missing function: #{inspect(missing)}")
 end
 ```
 

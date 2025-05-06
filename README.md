@@ -62,7 +62,7 @@ dag =
   |> DAG.add_function(sink_fn)
 
 # Validate the DAG to ensure it has no cycles and all dependencies exist
-{:ok, valid_dag} = DAG.validate(dag)
+:ok = DAG.validate(dag)
 
 # TODO: Execute the DAG (implementation coming soon)
 ```

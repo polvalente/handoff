@@ -128,7 +128,8 @@ defmodule Handout.ExecutorTest do
           code: fn a -> a * 2 end
         })
 
-      assert {:error, {:cycle_detected, _}} = Executor.execute(dag)
+      assert {:error, {:cyclic_dependency, cycle}} = Executor.execute(dag)
+      assert Enum.sort(cycle) == [:a, :b]
     end
 
     @tag :skip

@@ -3,6 +3,8 @@ defmodule Handout.DAGTest do
 
   alias Handout.{DAG, Function}
 
+  doctest Handout.DAG
+
   describe "new/0" do
     test "creates an empty DAG" do
       dag = DAG.new()
@@ -48,7 +50,7 @@ defmodule Handout.DAGTest do
         |> DAG.add_function(func1)
         |> DAG.add_function(func2)
 
-      assert {:ok, _} = DAG.validate(dag)
+      assert :ok == DAG.validate(dag)
     end
 
     test "detects missing dependencies" do
@@ -56,13 +58,13 @@ defmodule Handout.DAGTest do
 
       func = %Function{
         id: :func,
-        args: [:missing_function],
+        args: [:some_function],
         code: fn _ -> :result end
       }
 
       dag = DAG.add_function(dag, func)
 
-      assert {:error, {:missing_dependencies, [:missing_function]}} = DAG.validate(dag)
+      assert {:error, {:missing_function, :some_function}} = DAG.validate(dag)
     end
 
     test "detects cycles in the graph" do
@@ -92,7 +94,8 @@ defmodule Handout.DAGTest do
         |> DAG.add_function(func2)
         |> DAG.add_function(func3)
 
-      assert {:error, {:cycle_detected, _}} = DAG.validate(dag)
+      assert {:error, {:cyclic_dependency, cycle}} = DAG.validate(dag)
+      assert Enum.sort(cycle) == [:func2, :func3]
     end
   end
 end

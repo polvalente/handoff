@@ -48,7 +48,7 @@ defmodule Handout.DAG do
 
   # Validate the DAG
   case Handout.DAG.validate(dag) do
-    {:ok, validated_dag} ->
+    :ok ->
       # DAG is valid and ready for execution
       IO.puts("DAG is valid")
 
@@ -119,94 +119,112 @@ defmodule Handout.DAG do
   @doc ~S"""
   Validates that the DAG has no cycles and all dependencies exist.
 
-  ## Parameters
-  - dag: The DAG to validate
-
   ## Returns
-  - {:ok, dag} if the DAG is valid
-  - {:error, {:missing_dependencies, list}} if references to non-existent functions exist
-  - {:error, {:cycle_detected, id}} if a cycle is found in the graph
+  - `:ok` if the DAG is valid
+  - `{:error, {:missing_function, id}}` if references to an undefined function was found
+  - `{:error, {:cycle_detected, id}}` if a cycle is found in the graph
 
   ## Example
 
-  ```elixir
-  case Handout.DAG.validate(dag) do
-    {:ok, validated_dag} ->
-      # DAG is valid and ready for execution
-      Handout.execute(validated_dag)
+      iex> dag = Handout.DAG.new()
+      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [], code: fn -> 1 end})
+      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :b, args: [:a], code: fn %{a: a} -> a + 1 end})
+      iex> Handout.DAG.validate(dag)
+      :ok
 
-    {:error, reason} ->
-      # Handle the validation error
-      IO.puts("DAG validation failed: #{inspect(reason)}")
-  end
-  ```
+  ## Error cases
+
+      iex> dag = Handout.DAG.new()
+      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [:b], code: fn _ -> 1 end})
+      iex> Handout.DAG.validate(dag)
+      {:error, {:missing_function, :b}}
+
+      iex> dag = Handout.DAG.new()
+      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [:b], code: fn %{b: b} -> b end})
+      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :b, args: [:a], code: fn %{a: a} -> a end})
+      iex> {:error, {:cyclic_dependency, cycle}} = Handout.DAG.validate(dag)
+      iex> Enum.sort(cycle)
+      [:a, :b]
   """
   def validate(dag) do
-    with :ok <- validate_dependencies_exist(dag),
-         :ok <- validate_no_cycles(dag) do
-      {:ok, dag}
-    end
-  end
-
-  # Ensure all dependencies reference existing functions
-  defp validate_dependencies_exist(dag) do
-    all_function_ids = Map.keys(dag.functions)
-
-    missing_deps =
-      dag.functions
-      |> Enum.flat_map(fn {_, function} -> function.args end)
-      |> Enum.uniq()
-      |> Enum.reject(&(&1 in all_function_ids))
-
-    case missing_deps do
-      [] -> :ok
-      missing -> {:error, {:missing_dependencies, missing}}
-    end
-  end
-
-  # Check for cycles in the graph
-  defp validate_no_cycles(dag) do
-    visited = MapSet.new()
-    temp_visited = MapSet.new()
-
-    function_ids = Map.keys(dag.functions)
+    graph = :digraph.new([:acyclic])
 
     try do
-      {_, _} =
-        Enum.reduce(function_ids, {visited, temp_visited}, fn id, {visited, temp_visited} ->
-          if MapSet.member?(visited, id) do
-            {visited, temp_visited}
-          else
-            dfs(dag, id, visited, temp_visited)
-          end
-        end)
-
-      :ok
-    catch
-      {:cycle_detected, cycle} -> {:error, {:cycle_detected, cycle}}
+      with :ok <- add_functions(graph, dag.functions),
+           :ok <- check_for_missing_dependencies(graph) do
+        :ok
+      end
+    after
+      :digraph.delete(graph)
     end
   end
 
-  # Depth-first search for cycle detection
-  defp dfs(dag, id, visited, temp_visited) do
-    if MapSet.member?(temp_visited, id) do
-      throw({:cycle_detected, id})
-    end
+  defp add_functions(graph, functions) do
+    # Add vertices and edges
+    Enum.reduce_while(functions, :ok, fn {id, function}, _acc ->
+      with :ok <- add_vertex(graph, id),
+           :ok <- add_dependencies(graph, function) do
+        {:cont, :ok}
+      else
+        error ->
+          {:halt, error}
+      end
+    end)
+  end
 
-    if MapSet.member?(visited, id) do
-      {visited, temp_visited}
+  defp check_for_missing_dependencies(graph) do
+    # Check for missing dependencies (vertices with label nil)
+    missing =
+      Enum.find_value(:digraph.vertices(graph), fn v ->
+        case :digraph.vertex(graph, v) do
+          {^v, nil} -> v
+          _ -> false
+        end
+      end)
+
+    if missing do
+      {:error, {:missing_function, missing}}
     else
-      temp_visited = MapSet.put(temp_visited, id)
-
-      function = Map.get(dag.functions, id)
-      dependencies = function.args
-
-      {visited, temp_visited} =
-        Enum.reduce(dependencies, {visited, temp_visited}, fn dep_id, {v, tv} ->
-          dfs(dag, dep_id, v, tv)
-        end)
-
-      {MapSet.put(visited, id), MapSet.delete(temp_visited, id)}
+      :ok
     end
+  end
+
+  defp add_vertex(graph, id) do
+    # Add or update vertex for the function itself
+    case :digraph.vertex(graph, id) do
+      false ->
+        :digraph.add_vertex(graph, id, id)
+        :ok
+
+      {^id, nil} ->
+        :digraph.add_vertex(graph, id, id)
+        :ok
+
+      {^id, _} ->
+        {:error, {:duplicate_function, id}}
+    end
+  end
+
+  defp add_dependencies(graph, function) do
+    # Add vertices for dependencies (label nil if not present)
+    Enum.reduce_while(function.args, :ok, fn dep_id, _acc ->
+      case :digraph.vertex(graph, dep_id) do
+        false ->
+          :digraph.add_vertex(graph, dep_id, nil)
+          :ok
+
+        _ ->
+          :ok
+      end
+
+      # TO-DO: return error when add_edge fails because the graph is cyclic
+      case :digraph.add_edge(graph, dep_id, function.id) do
+        {:error, _} ->
+          {:halt, {:error, {:cyclic_dependency, [dep_id, function.id]}}}
+
+        _ ->
+          {:cont, :ok}
+      end
+    end)
   end
 end

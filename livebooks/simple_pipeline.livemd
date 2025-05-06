@@ -158,11 +158,11 @@ dag =
 
 # Validate the DAG
 case Handout.DAG.validate(dag) do
-  {:ok, valid_dag} ->
+  :ok ->
     IO.puts("\nExecuting data pipeline...\n")
 
     # Execute the DAG
-    case Handout.execute(valid_dag) do
+    case Handout.execute(dag) do
       {:ok, results} ->
         # Print the final formatted output
         IO.puts(results[:format_output])
@@ -198,8 +198,8 @@ modified_dag =
   |> Handout.DAG.add_function(format_fn)
 
 # Execute the modified DAG
-{:ok, valid_dag} = Handout.DAG.validate(modified_dag)
-{:ok, results} = Handout.execute(valid_dag)
+:ok = Handout.DAG.validate(modified_dag)
+{:ok, results} = Handout.execute(dag)
 IO.puts(results[:format_output])
 ```
 
