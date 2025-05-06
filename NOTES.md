@@ -1,4 +1,3 @@
-- Functions add themselves as dependencies for their args in Handout.DAG
 - Currently no way of depending on just a single position of an argument
   - We can fix this by introducing a special syntax where arguments can be a tuple of {:fetch, id, index}
     and we fetch the index with elem or Enum.fetch depending on whether the value is a tuple.
