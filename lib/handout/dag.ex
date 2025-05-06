@@ -1,5 +1,5 @@
 defmodule Handout.DAG do
-  @moduledoc """
+  @moduledoc ~S"""
   Provides functionality for building and validating directed acyclic graphs (DAGs) of functions.
 
   This module is the core of the Handout library, allowing you to:
@@ -13,7 +13,6 @@ defmodule Handout.DAG do
   A DAG in Handout is represented as a map with:
 
   * `:functions` - A map of function IDs to `Handout.Function` structs
-  * `:dependencies` - A map tracking which functions depend on which others
 
   ## Examples
 
@@ -54,10 +53,10 @@ defmodule Handout.DAG do
       IO.puts("DAG is valid")
 
     {:error, {:missing_dependencies, missing}} ->
-      IO.puts("DAG has missing dependencies: \#{inspect(missing)}")
+      IO.puts("DAG has missing dependencies: #{inspect(missing)}")
 
     {:error, {:cycle_detected, cycle}} ->
-      IO.puts("DAG contains a cycle at: \#{inspect(cycle)}")
+      IO.puts("DAG contains a cycle at: #{inspect(cycle)}")
   end
   ```
 
@@ -73,10 +72,12 @@ defmodule Handout.DAG do
 
   alias Handout.Function
 
+  defstruct functions: %{}
+
   @doc """
   Creates a new empty DAG.
 
-  Returns a map with empty `:functions` and `:dependencies` maps that can be
+  Returns a map with empty `:functions` map that can be
   populated using `add_function/2`.
 
   ## Example
@@ -86,10 +87,7 @@ defmodule Handout.DAG do
   ```
   """
   def new do
-    %{
-      functions: %{},
-      dependencies: %{}
-    }
+    %__MODULE__{}
   end
 
   @doc """
@@ -100,7 +98,7 @@ defmodule Handout.DAG do
   - function: A Handout.Function struct to add to the DAG
 
   ## Returns
-  - Updated DAG with the function added and dependencies tracked
+  - Updated DAG with the function added
 
   ## Example
 
@@ -115,20 +113,10 @@ defmodule Handout.DAG do
   ```
   """
   def add_function(dag, %Function{} = function) do
-    updated_functions = Map.put(dag.functions, function.id, function)
-
-    # Update dependency tracking
-    updated_dependencies =
-      Enum.reduce(function.args, dag.dependencies, fn arg_id, deps ->
-        Map.update(deps, arg_id, [function.id], fn dependents ->
-          [function.id | dependents] |> Enum.uniq()
-        end)
-      end)
-
-    %{dag | functions: updated_functions, dependencies: updated_dependencies}
+    put_in(dag.functions[function.id], function)
   end
 
-  @doc """
+  @doc ~S"""
   Validates that the DAG has no cycles and all dependencies exist.
 
   ## Parameters
@@ -149,7 +137,7 @@ defmodule Handout.DAG do
 
     {:error, reason} ->
       # Handle the validation error
-      IO.puts("DAG validation failed: \#{inspect(reason)}")
+      IO.puts("DAG validation failed: #{inspect(reason)}")
   end
   ```
   """
