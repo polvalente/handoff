@@ -115,8 +115,10 @@ defmodule Handout.DistributedResultStore do
   def clear_all_nodes(dag_id) do
     # Clear local results for the DAG
     ResultStore.clear(dag_id)
+    # Clear local DataLocationRegistry for the DAG synchronously
+    DataLocationRegistry.clear(dag_id)
 
-    # Request all connected nodes to clear their results for the DAG
+    # Request all connected nodes to clear their results for the DAG (async)
     GenServer.cast(__MODULE__, {:broadcast_clear, dag_id})
 
     :ok
@@ -174,7 +176,8 @@ defmodule Handout.DistributedResultStore do
       :rpc.cast(node, ResultStore, :clear, [dag_id])
     end)
 
-    # Also clear the data location registry for the specific DAG
+    # Also clear the data location registry for the specific DAG (on this node, if it also received the cast)
+    # This might be redundant if the caller node also called clear_all_nodes, but ensures cleanup.
     DataLocationRegistry.clear(dag_id)
 
     {:noreply, state}

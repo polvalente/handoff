@@ -3,100 +3,92 @@ defmodule Handout.DataLocationRegistryTest do
 
   alias Handout.DataLocationRegistry
 
-  @dag_id "test_dag_id"
+  @dag_id_a "test_dag_a"
+  @dag_id_b "test_dag_b"
 
   setup do
-    # Clear the registry for the test dag_id between tests
-    DataLocationRegistry.clear(@dag_id)
-    # Ensure other_dag_id is also cleared if used, making it a string too
-    DataLocationRegistry.clear("another_dag")
-
+    # Clear the registry for the test DAG IDs between tests
+    DataLocationRegistry.clear(@dag_id_a)
+    DataLocationRegistry.clear(@dag_id_b)
     :ok
   end
 
-  describe "data location registry" do
-    test "can register and lookup data locations" do
-      # Register some data
+  describe "data location registry with DAG ID scoping" do
+    test "can register and lookup data locations for a specific DAG" do
       node = Node.self()
-      other_node = :"other_node@example.com"
+      :ok = DataLocationRegistry.register(@dag_id_a, :data1_dag_a, node)
+      :ok = DataLocationRegistry.register(@dag_id_b, :data1_dag_b, node)
 
-      :ok = DataLocationRegistry.register(@dag_id, :test_data1, node)
-      :ok = DataLocationRegistry.register(@dag_id, :test_data2, other_node)
-
-      # Lookup registered data
-      assert {:ok, result1} = DataLocationRegistry.lookup(@dag_id, :test_data1)
-      assert result1 == node
-
-      assert {:ok, result2} = DataLocationRegistry.lookup(@dag_id, :test_data2)
-      assert result2 == other_node
+      assert {:ok, ^node} = DataLocationRegistry.lookup(@dag_id_a, :data1_dag_a)
+      assert {:ok, ^node} = DataLocationRegistry.lookup(@dag_id_b, :data1_dag_b)
     end
 
-    test "returns error when looking up unregistered data" do
-      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id, :nonexistent)
+    test "lookup returns :not_found for data in a different DAG" do
+      node = Node.self()
+      :ok = DataLocationRegistry.register(@dag_id_a, :data1_dag_a, node)
+
+      # Try to look up data1_dag_a using dag_id_b
+      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id_b, :data1_dag_a)
+      # Try to look up non-existent data in dag_id_a
+      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id_a, :non_existent_data)
     end
 
-    test "can update registered locations" do
-      # Register data
-      node = Node.self()
-      new_node = :"new_node@example.com"
+    test "can update registered locations for a specific DAG" do
+      node1 = Node.self()
+      node2 = :"other_node@example.com"
 
-      :ok = DataLocationRegistry.register(@dag_id, :test_data3, node)
-      {:ok, result} = DataLocationRegistry.lookup(@dag_id, :test_data3)
-      assert result == node
+      :ok = DataLocationRegistry.register(@dag_id_a, :data_to_update, node1)
+      assert {:ok, ^node1} = DataLocationRegistry.lookup(@dag_id_a, :data_to_update)
 
-      # Update the location
-      :ok = DataLocationRegistry.register(@dag_id, :test_data3, new_node)
-      {:ok, updated_result} = DataLocationRegistry.lookup(@dag_id, :test_data3)
-      assert updated_result == new_node
+      # Update the location for the same DAG ID
+      :ok = DataLocationRegistry.register(@dag_id_a, :data_to_update, node2)
+      assert {:ok, ^node2} = DataLocationRegistry.lookup(@dag_id_a, :data_to_update)
+
+      # Ensure an update for dag_id_a doesn't affect a hypothetical same data_id in dag_id_b
+      # Store initial for dag_b
+      :ok = DataLocationRegistry.register(@dag_id_b, :data_to_update, node1)
+      # Update for dag_a
+      :ok = DataLocationRegistry.register(@dag_id_a, :data_to_update, node2)
+      # Verify dag_b is untouched
+      assert {:ok, ^node1} = DataLocationRegistry.lookup(@dag_id_b, :data_to_update)
     end
 
-    test "can get all registered locations for a dag" do
-      # Register multiple data locations for the current dag_id
-      node = Node.self()
-      other_node = :"other_node@example.com"
-      other_dag_id = "another_dag"
+    test "get_all returns locations only for the specified DAG" do
+      node_a = Node.self()
+      node_b = :"node_b@example.com"
 
-      :ok = DataLocationRegistry.register(@dag_id, :test_data4, node)
-      :ok = DataLocationRegistry.register(@dag_id, :test_data5, other_node)
-      # Register data for another DAG to ensure get_all is scoped
-      :ok = DataLocationRegistry.register(other_dag_id, :test_data_other_dag, node)
+      :ok = DataLocationRegistry.register(@dag_id_a, :item1_dag_a, node_a)
+      :ok = DataLocationRegistry.register(@dag_id_a, :item2_dag_a, node_a)
+      :ok = DataLocationRegistry.register(@dag_id_b, :item1_dag_b, node_b)
 
-      # Get all registrations for the current dag_id
-      all_locations = DataLocationRegistry.get_all(@dag_id)
+      locations_a = DataLocationRegistry.get_all(@dag_id_a)
+      assert locations_a == %{item1_dag_a: node_a, item2_dag_a: node_a}
+      assert map_size(locations_a) == 2
 
-      assert map_size(all_locations) == 2
-      assert Map.get(all_locations, :test_data4) == node
-      assert Map.get(all_locations, :test_data5) == other_node
+      locations_b = DataLocationRegistry.get_all(@dag_id_b)
+      assert locations_b == %{item1_dag_b: node_b}
+      assert map_size(locations_b) == 1
 
-      # Cleanup data for other_dag_id to keep tests isolated if run in parallel or state persists
-      DataLocationRegistry.clear(other_dag_id)
+      assert DataLocationRegistry.get_all("non_existent_dag") == %{}
     end
 
-    test "clear removes all registrations for a dag" do
-      # Register data
+    test "clear removes registrations only for the specified DAG" do
       node = Node.self()
-      other_dag_id = "another_dag"
 
-      :ok = DataLocationRegistry.register(@dag_id, :test_data6, node)
-      :ok = DataLocationRegistry.register(@dag_id, :test_data7, :"other_node@example.com")
-      # Register data for another DAG to ensure clear is scoped
-      :ok = DataLocationRegistry.register(other_dag_id, :test_data_other_dag, node)
+      :ok = DataLocationRegistry.register(@dag_id_a, :data_a1, node)
+      :ok = DataLocationRegistry.register(@dag_id_a, :data_a2, node)
+      :ok = DataLocationRegistry.register(@dag_id_b, :data_b1, node)
 
-      # Verify registration for current dag
-      assert {:ok, _} = DataLocationRegistry.lookup(@dag_id, :test_data6)
+      # Clear for dag_id_a
+      :ok = DataLocationRegistry.clear(@dag_id_a)
 
-      # Clear the registry for the current dag_id
-      :ok = DataLocationRegistry.clear(@dag_id)
+      # Verify data for dag_id_a is gone
+      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id_a, :data_a1)
+      assert map_size(DataLocationRegistry.get_all(@dag_id_a)) == 0
 
-      # Verify nothing is registered for the current dag_id
-      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id, :test_data6)
-      assert {:error, :not_found} = DataLocationRegistry.lookup(@dag_id, :test_data7)
-      assert map_size(DataLocationRegistry.get_all(@dag_id)) == 0
-
-      # Verify data for other_dag_id still exists
-      assert {:ok, ^node} = DataLocationRegistry.lookup(other_dag_id, :test_data_other_dag)
-      # Cleanup data for other_dag_id
-      DataLocationRegistry.clear(other_dag_id)
+      # Verify data for dag_id_b still exists
+      assert {:ok, ^node} = DataLocationRegistry.lookup(@dag_id_b, :data_b1)
+      assert DataLocationRegistry.get_all(@dag_id_b) == %{data_b1: node}
     end
   end
 end
