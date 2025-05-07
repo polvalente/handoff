@@ -1,20 +1,19 @@
 defmodule Handout.DistributedExecutorTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
-  alias Handout.{DAG, Function, DistributedExecutor, SimpleResourceTracker}
-
-  # Set up distributed test nodes
-  # Note: In a real test environment, you would set up actual distributed Erlang nodes
-  # For unit tests, we'll simulate distribution with local processes
+  alias Handout.{
+    DAG,
+    Function,
+    DistributedExecutor,
+    SimpleResourceTracker
+  }
 
   setup do
-    # Start the application supervisors
-    start_supervised!(Handout.Supervisor)
-
     # Register local node with some capabilities
+    [node_2 | _] = Application.get_env(:handout, :test_nodes)
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
-
-    :ok
+    :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000}])
+    %{node_2: node_2}
   end
 
   describe "node discovery" do
@@ -27,9 +26,10 @@ defmodule Handout.DistributedExecutorTest do
 
   describe "distributed execution" do
     test "can execute simple DAG on local node" do
-      # Define a simple DAG with two functions
-      dag =
-        DAG.new()
+      dag = DAG.new(self())
+
+      dag_with_functions =
+        dag
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
@@ -44,20 +44,78 @@ defmodule Handout.DistributedExecutorTest do
         })
 
       # Execute the DAG
-      assert {:ok, results} = DistributedExecutor.execute(dag)
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert returned_dag_id == dag.id
 
       # Check results
-      assert Map.get(results, :source) == 42
-      assert Map.get(results, :squared) == 1764
+      assert Map.get(actual_results, :source) == 42
+      assert Map.get(actual_results, :squared) == 1764
+    end
+
+    test "can execute simple DAG on two nodes", %{node_2: node_2} do
+      dag = DAG.new(self())
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :source,
+          args: [],
+          code: fn -> 42 end,
+          cost: %{cpu: 1, memory: 1950}
+        })
+        |> DAG.add_function(%Function{
+          id: :concatenated,
+          args: [:source],
+          code: &Handout.DistributedTestFunctions.g/2,
+          extra_args: [1337],
+          cost: %{cpu: 1, memory: 100}
+        })
+        |> DAG.add_function(%Function{
+          id: :final,
+          args: [:concatenated],
+          code: &Handout.DistributedTestFunctions.f/1,
+          extra_args: [],
+          cost: %{cpu: 1, memory: 50}
+        })
+
+      # Execute the DAG
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results, allocations: allocations}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert allocations == %{source: Node.self(), concatenated: node_2, final: Node.self()}
+
+      assert returned_dag_id == dag.id
+
+      # Check results
+      assert Map.get(actual_results, :source) == 42
+
+      # For functions executed remotely, the result is registered but not included directly in results
+      assert Map.get(actual_results, :concatenated) == :remote_executed_and_registered
+
+      # We need to fetch the remote result directly
+      {:ok, concatenated_result} =
+        :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
+
+      assert concatenated_result == [42, 1337]
+
+      # The final function uses the result it fetched from the remote node
+      assert Map.get(actual_results, :final) == [[42, 1337]]
+
+      # Double-check result is accessible on the remote node
+      assert {:ok, [42, 1337]} =
+               :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
     end
 
     test "can execute DAG with failure and retry" do
-      # Define a more complex DAG with a function that fails once but succeeds on retry
+      # Use specific DAG ID
+      dag = DAG.new(self())
       # We'll use an agent to track execution attempts
       {:ok, agent} = Agent.start_link(fn -> %{count: 0} end)
 
-      dag =
-        DAG.new()
+      dag_with_functions =
+        dag
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
@@ -89,12 +147,15 @@ defmodule Handout.DistributedExecutorTest do
       opts = [max_retries: 1]
 
       # Execute the DAG
-      assert {:ok, results} = DistributedExecutor.execute(dag, opts)
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions, opts)
+
+      assert returned_dag_id == dag.id
 
       # Check results
-      assert Map.get(results, :source) == 10
-      assert Map.get(results, :fails_once) == 20
-      assert Map.get(results, :final) == 25
+      assert Map.get(actual_results, :source) == 10
+      assert Map.get(actual_results, :fails_once) == 20
+      assert Map.get(actual_results, :final) == 25
 
       # Check that the function was called twice
       assert Agent.get(agent, fn state -> state.count end) == 2
@@ -103,9 +164,12 @@ defmodule Handout.DistributedExecutorTest do
 
   describe "resource management" do
     test "respects resource limits" do
+      dag1_id = {self(), 1}
+      dag2_id = {self(), 2}
+
       # Define functions that require more resources than available
-      dag =
-        DAG.new()
+      dag_fail =
+        DAG.new(dag1_id)
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],
@@ -126,11 +190,11 @@ defmodule Handout.DistributedExecutorTest do
         })
 
       # This execution should fail because of resource constraints
-      assert {:error, _} = DistributedExecutor.execute(dag)
+      assert {:error, _} = DistributedExecutor.execute(dag_fail)
 
       # But a DAG with only the small resource function should succeed
       small_dag =
-        DAG.new()
+        DAG.new(dag2_id)
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],
@@ -138,8 +202,11 @@ defmodule Handout.DistributedExecutorTest do
           cost: %{cpu: 2, memory: 1000}
         })
 
-      assert {:ok, results} = DistributedExecutor.execute(small_dag)
-      assert Map.get(results, :small_resource) == 42
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(small_dag)
+
+      assert returned_dag_id == small_dag.id
+      assert Map.get(actual_results, :small_resource) == 42
     end
   end
 end

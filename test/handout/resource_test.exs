@@ -6,9 +6,6 @@ defmodule Handout.ResourceTest do
   alias Handout.SimpleAllocator
 
   setup do
-    # Start the SimpleResourceTracker
-    start_supervised!(SimpleResourceTracker)
-
     # Get test nodes if available
     test_nodes = Application.get_env(:handout, :test_nodes, [])
 

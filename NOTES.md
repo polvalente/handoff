@@ -1,8 +1,3 @@
-- Currently no way of depending on just a single position of an argument
-  - We can fix this by introducing a special syntax where arguments can be a tuple of {:fetch, id, index}
-    and we fetch the index with elem or Enum.fetch depending on whether the value is a tuple.
-    The fetch must happen in the source node before sending data to the dependent node.
-- Distributed executor is always accumulating results on the orchestrator instead of keeping them on-node. And arguments are fetched from the locally saved map. We need to change this so that the arguments are fecthed from the node in which they are allocated and results are saved locally to each node only, and we just transfer when requested. Each node can keep a cache of the fetched arguments so that if multiple functions fetch the same arguments to the same node, the data only travels once.
-- Distributed result store shouldn't sync results by default.
-- Possibly remove Executor in favor of just using DistributedExecutor for both cases. Likewise, Handout.ResultStore can also be the same as the DistributedResultStore
-- Function: add possibility of forcing a function to have the same node as another with `node:`{:collocated, :another_function_id}`
+- Function: add possibility of forcing a function to have the same node as another with `node: {:collocated, :another_function_id}`
+- Function: some kind of annotation that a given function should always be ran instead of the value being saved. This will allow us to load certain layers of a neural network from disk regardless of where they're stored.
+- Resource management in simple_allocator.ex: order nodes instead of keeping a map of nodes. If we have to move to a following node, it should be brought to the front of the list so that we prioritize allocating functions to the latest node. Just take the node and bubble it to the top.

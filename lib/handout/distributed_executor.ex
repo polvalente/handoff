@@ -7,7 +7,7 @@ defmodule Handout.DistributedExecutor do
 
   use GenServer
   require Logger
-  alias Handout.{DAG, ResultStore, SimpleResourceTracker}
+  alias Handout.{DAG, ResultStore, SimpleResourceTracker, DataLocationRegistry}
 
   # Client API
 
@@ -117,8 +117,30 @@ defmodule Handout.DistributedExecutor do
 
   @impl true
   def handle_call({:execute, dag, opts}, from, state) do
-    # Clear any previous results
-    ResultStore.clear()
+    # Clear any previous results for this DAG
+    ResultStore.clear(dag.id)
+
+    # Clear data location registry for this DAG
+    DataLocationRegistry.clear(dag.id)
+
+    # Register initial arguments in the data location registry for this DAG
+    dag.functions
+    |> Map.values()
+    |> Enum.each(fn function ->
+      # For functions with no arguments (source functions), we don't need to register anything
+      if function.args == [] or function.args == nil do
+        :ok
+      else
+        # Register each initial argument as available on the local node for this DAG
+        function.args
+        |> Enum.each(fn arg_id ->
+          # Only register if it's a literal value, not a function ID
+          unless Map.has_key?(dag.functions, arg_id) do
+            DataLocationRegistry.register(dag.id, arg_id, Node.self())
+          end
+        end)
+      end
+    end)
 
     # If no nodes are known, discover them
     state =
@@ -239,7 +261,10 @@ defmodule Handout.DistributedExecutor do
         end)
 
       if Enum.empty?(resource_errors) do
-        GenServer.reply(caller, {:ok, results})
+        GenServer.reply(
+          caller,
+          {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
+        )
       else
         # If any function failed due to resource constraints, return error
         GenServer.reply(caller, {:error, "Resource constraints not satisfied"})
@@ -262,7 +287,13 @@ defmodule Handout.DistributedExecutor do
 
           # Check if all dependencies are executed
           all_deps_executed? =
-            Enum.all?(function.args, fn arg_id -> Map.has_key?(executed, arg_id) end)
+            Enum.all?(function.args, fn arg_id ->
+              # An argument is considered executed if it's in the executed map
+              # OR if it's an initial argument (not a function_id from this dag).
+              # For simplicity, we assume initial args are always "ready".
+              # Proper handling of initial args vs. function results would be more robust here.
+              Map.has_key?(executed, arg_id) or not Map.has_key?(dag.functions, arg_id)
+            end)
 
           all_deps_executed?
         end)
@@ -275,17 +306,31 @@ defmodule Handout.DistributedExecutor do
                                                                               executed_acc} ->
           function = Map.get(dag.functions, function_id)
 
-          # Prepare arguments from executed results
-          args = Enum.map(function.args, fn arg_id -> Map.get(executed_acc, arg_id) end)
+          # Prepare arguments. For remote execution, this will pass arg_ids.
+          # For local, it resolves them.
+          args_for_execution = fetch_arguments(dag.id, function.args, executed_acc, function.node)
 
           # Execute the function on the assigned node
-          Logger.debug("Executing function #{function_id} on node #{inspect(function.node)}")
 
           try do
-            case execute_function_on_node(function, args, max_retries) do
+            # Pass `args_for_execution` which are actual values for local, or arg_ids for remote.
+            case execute_function_on_node(dag.id, function, args_for_execution, max_retries) do
+              {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
+                # For remote execution, the result is not returned directly.
+                # We mark it as executed by adding its ID with a placeholder or status.
+                # The actual result can be fetched via Handout.get_result if needed later.
+                executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
+                to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+                {pending_acc, to_be_executed_acc, executed_acc}
+
+              # This case is for local execution where result is returned directly
               {:ok, result} ->
-                # Store result and continue
-                :ok = ResultStore.store(function_id, result)
+                # Store result locally
+                :ok = ResultStore.store(dag.id, function_id, result)
+
+                # Register result location in the registry
+                DataLocationRegistry.register(dag.id, function_id, function.node)
+
                 # Add to executed and remove from to_be_executed
                 executed_acc = Map.put(executed_acc, function_id, result)
                 to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
@@ -323,7 +368,7 @@ defmodule Handout.DistributedExecutor do
           Enum.reduce(new_pending, {MapSet.new(), %{}}, fn function_id,
                                                            {pending_acc, executed_acc} ->
             try do
-              case ResultStore.get(function_id) do
+              case ResultStore.get(dag.id, function_id) do
                 {:ok, result} ->
                   # Function completed
                   {pending_acc, Map.put(executed_acc, function_id, result)}
@@ -368,8 +413,9 @@ defmodule Handout.DistributedExecutor do
     end
   end
 
-  defp execute_function_on_node(function, args, max_retries, current_retry \\ 0) do
+  defp execute_function_on_node(dag_id, function, args, max_retries, current_retry \\ 0) do
     # Request resources if function has a cost
+    # No function.cost or no function.node (should imply local execution or error in allocation)
     if function.cost && function.node do
       case SimpleResourceTracker.request(function.node, function.cost) do
         :ok ->
@@ -379,13 +425,46 @@ defmodule Handout.DistributedExecutor do
               result = apply(function.code, args ++ function.extra_args)
               # Release resources
               SimpleResourceTracker.release(function.node, function.cost)
+              # Local execution still returns the result directly
               {:ok, result}
             else
-              # For remote node execution
-              case :rpc.call(function.node, Kernel, :apply, [
-                     function.code,
-                     args ++ function.extra_args
+              # For remote node execution - the orchestrator is this node (self)
+              case :rpc.call(function.node, Handout.RemoteExecutionWrapper, :execute_and_store, [
+                     dag_id,
+                     function,
+                     args,
+                     # Pass the orchestrator node explicitly
+                     Node.self()
                    ]) do
+                {:ok, :result_stored_locally} ->
+                  SimpleResourceTracker.release(function.node, function.cost)
+                  DataLocationRegistry.register(dag_id, function.id, function.node)
+                  # Signal success; actual data is not returned from remote node directly
+                  {:ok, {:remote_store_and_registry_ok, function.id, function.node}}
+
+                {:error, remote_error_detail} ->
+                  SimpleResourceTracker.release(function.node, function.cost)
+
+                  Logger.warning(
+                    "Remote execution or store failed for function #{function.id} (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(remote_error_detail)}"
+                  )
+
+                  if current_retry < max_retries do
+                    execute_function_on_node(
+                      dag_id,
+                      function,
+                      args,
+                      max_retries,
+                      current_retry + 1
+                    )
+                  else
+                    # Ensure to raise a distinct error for propagation
+                    raise %RuntimeError{
+                      message:
+                        "Failed to execute function #{function.id} on node #{function.node} after #{max_retries + 1} attempts. Last error: #{inspect(remote_error_detail)}"
+                    }
+                  end
+
                 {:badrpc, reason} ->
                   # Release resources
                   SimpleResourceTracker.release(function.node, function.cost)
@@ -393,72 +472,119 @@ defmodule Handout.DistributedExecutor do
                   if current_retry < max_retries do
                     # Retry execution
                     Logger.warning(
-                      "Retrying function #{function.id} execution after error: #{inspect(reason)}"
+                      "Retrying function #{function.id} execution after RPC error (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(reason)}"
                     )
 
-                    execute_function_on_node(function, args, max_retries, current_retry + 1)
+                    execute_function_on_node(
+                      dag_id,
+                      function,
+                      args,
+                      max_retries,
+                      current_retry + 1
+                    )
                   else
-                    raise "Failed to execute function #{function.id} after #{max_retries} retries: #{inspect(reason)}"
+                    raise %RuntimeError{
+                      message:
+                        "Failed to execute function #{function.id} via RPC on node #{function.node} after #{max_retries + 1} attempts: #{inspect(reason)}"
+                    }
                   end
-
-                result ->
-                  # Release resources
-                  SimpleResourceTracker.release(function.node, function.cost)
-                  {:ok, result}
               end
             end
           rescue
+            # This rescue is for errors in the local node's logic BEFORE or AFTER rpc, or local execution
             e ->
               # Release resources on error
               SimpleResourceTracker.release(function.node, function.cost)
 
               if current_retry < max_retries do
-                # Retry execution
                 Logger.warning(
-                  "Retrying function #{function.id} execution after error: #{inspect(e)}"
+                  "Retrying function #{function.id} (orchestrator error or local exec error, attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(e)}"
                 )
 
-                execute_function_on_node(function, args, max_retries, current_retry + 1)
+                execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
               else
-                raise "Failed to execute function #{function.id} after #{max_retries} retries: #{inspect(e)}"
+                raise %RuntimeError{
+                  message:
+                    "Failed to process function #{function.id} after #{max_retries + 1} attempts (orchestrator/local error): #{inspect(e)}"
+                }
               end
           end
 
         {:error, :resources_unavailable} ->
-          # Return an error instead of raising
+          # Return an error instead of raising, if resources couldn't be acquired initially
+          # This indicates the SimpleResourceTracker denied the request for function.node
           {:error,
            %RuntimeError{
-             message: "Resources unavailable for function #{function.id} on node #{function.node}"
+             message:
+               "Resources unavailable for function #{function.id} on node #{function.node} (request by orchestrator)"
            }}
       end
     else
-      # No resource requirements, just execute
+      # No resource requirements, just execute (assumed local or pre-validated)
+      # If function.node is nil here but code is remote, that's a logical error upstream.
+      # Assuming if function.node is nil, it must run locally.
       try do
-        if function.node == Node.self() do
-          result = apply(function.code, args ++ function.extra_args)
-          {:ok, result}
-        else
-          case :rpc.call(function.node, Kernel, :apply, [
-                 function.code,
-                 args ++ function.extra_args
+        # If function.node is not specified, assume local execution.
+        # If function.node IS specified but no cost, it respects the node if remote.
+        # Local execution (no cost or no specific node)
+        if function.node && function.node != Node.self() do
+          # Remote execution without cost - the orchestrator is this node (self)
+          case :rpc.call(function.node, Handout.RemoteExecutionWrapper, :execute_and_store, [
+                 dag_id,
+                 function,
+                 args,
+                 # Pass the orchestrator node explicitly
+                 Node.self()
                ]) do
-            {:badrpc, reason} ->
+            {:ok, :result_stored_locally} ->
+              DataLocationRegistry.register(dag_id, function.id, function.node)
+              {:ok, {:remote_store_and_registry_ok, function.id, function.node}}
+
+            {:error, remote_error_detail} ->
+              Logger.warning(
+                "Remote execution (no cost) or store failed for function #{function.id} (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(remote_error_detail)}"
+              )
+
               if current_retry < max_retries do
-                execute_function_on_node(function, args, max_retries, current_retry + 1)
+                execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
               else
-                raise "Failed to execute function #{function.id} after #{max_retries} retries: #{inspect(reason)}"
+                raise %RuntimeError{
+                  message:
+                    "Failed to execute function #{function.id} (no cost) on node #{function.node} after #{max_retries + 1} attempts. Last error: #{inspect(remote_error_detail)}"
+                }
               end
 
-            result ->
-              {:ok, result}
+            {:badrpc, reason} ->
+              if current_retry < max_retries do
+                Logger.warning(
+                  "Retrying function #{function.id} (no cost) execution after RPC error (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(reason)}"
+                )
+
+                execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
+              else
+                raise %RuntimeError{
+                  message:
+                    "Failed to execute function #{function.id} (no cost) via RPC on node #{function.node} after #{max_retries + 1} attempts: #{inspect(reason)}"
+                }
+              end
           end
+        else
+          result = apply(function.code, args ++ function.extra_args)
+          {:ok, result}
         end
       rescue
         e ->
           if current_retry < max_retries do
-            execute_function_on_node(function, args, max_retries, current_retry + 1)
+            Logger.warning(
+              "Retrying function #{function.id} (no cost, local error, attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(e)}"
+            )
+
+            execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
           else
-            raise "Failed to execute function #{function.id} after #{max_retries} retries: #{inspect(e)}"
+            raise %RuntimeError{
+              message:
+                "Failed to execute function #{function.id} (no cost, local) after #{max_retries + 1} attempts: #{inspect(e)}"
+            }
           end
       end
     end
@@ -519,6 +645,63 @@ defmodule Handout.DistributedExecutor do
           )
 
         {[id | sorted], visited}
+    end
+  end
+
+  # New helper function to fetch arguments from appropriate nodes
+  defp fetch_arguments(dag_id, arg_ids, executed_results, target_node) do
+    if target_node == Node.self() do
+      # Local execution on the orchestrator node: resolve arguments as before.
+      Enum.map(arg_ids, fn arg_id ->
+        if Map.has_key?(executed_results, arg_id) do
+          # Argument is a result from a previously executed function in this DAG run
+          result = Map.get(executed_results, arg_id)
+
+          # If it's a remote execution marker, fetch the actual value
+          if result == :remote_executed_and_registered do
+            # Find where the result is stored
+            case DataLocationRegistry.lookup(dag_id, arg_id) do
+              {:ok, source_node} ->
+                # Fetch from the node where it's stored
+                case :rpc.call(source_node, ResultStore, :get, [dag_id, arg_id]) do
+                  {:ok, actual_value} ->
+                    # Store locally for future use
+                    ResultStore.store(dag_id, arg_id, actual_value)
+                    actual_value
+
+                  {:error, reason} ->
+                    raise "Failed to fetch remote result for arg_id #{inspect(arg_id)}: #{inspect(reason)}"
+
+                  {:badrpc, reason} ->
+                    raise "RPC error fetching result for arg_id #{inspect(arg_id)}: #{inspect(reason)}"
+                end
+
+              {:error, :not_found} ->
+                raise "No location registered for remote arg_id #{inspect(arg_id)}"
+            end
+          else
+            # Return the actual result already present
+            result
+          end
+        else
+          # Argument is an initial input or needs fetching from global ResultStore (potentially remote).
+          # ResultStore.get_with_fetch will handle RPC if data isn't local to orchestrator.
+          case ResultStore.get_with_fetch(dag_id, arg_id) do
+            {:ok, value} ->
+              value
+
+            {:error, _reason} ->
+              # Propagate error: argument not found anywhere accessible to orchestrator.
+              raise RuntimeError,
+                message:
+                  "Orchestrator failed to fetch argument #{inspect(arg_id)} for DAG #{inspect(dag_id)} for local execution on target_node #{inspect(target_node)}"
+          end
+        end
+      end)
+    else
+      # Remote execution: Orchestrator passes arg_ids.
+      # RemoteExecutionWrapper on target_node will be responsible for fetching them from its *local* ResultStore.
+      arg_ids
     end
   end
 end

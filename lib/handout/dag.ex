@@ -72,22 +72,21 @@ defmodule Handout.DAG do
 
   alias Handout.Function
 
-  defstruct functions: %{}
+  defstruct functions: %{}, id: nil
 
   @doc """
-  Creates a new empty DAG.
+  Creates a new empty DAG with a specified ID or generates a new one.
 
-  Returns a map with empty `:functions` map that can be
-  populated using `add_function/2`.
+  ## Parameters
+  - id: (Optional) The ID to assign to the DAG. If nil, a `make_ref/0` will be used.
 
   ## Example
 
-  ```elixir
-  dag = Handout.DAG.new()
-  ```
+      dag_with_specific_id = Handout.DAG.new("some-specific-id")
+      dag_with_generated_id = Handout.DAG.new()
   """
-  def new do
-    %__MODULE__{}
+  def new(id \\ nil) do
+    %__MODULE__{id: id || make_ref()}
   end
 
   @doc """
