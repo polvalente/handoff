@@ -227,8 +227,6 @@ defmodule Handout.DistributedExecutor do
     # Allocate functions to nodes
     allocations = allocate_functions(dag, node_caps, allocation_strategy)
 
-    dbg(allocations)
-
     # Update dag functions with node assignments
     dag = assign_nodes_to_functions(dag, allocations)
 
