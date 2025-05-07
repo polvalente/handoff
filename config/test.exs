@@ -1,3 +1,5 @@
 import Config
 
-config :logger, level: :info
+config :logger, level: :warning, remote_node_level: :warning
+
+config :ex_unit, capture_log: true

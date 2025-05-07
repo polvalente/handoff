@@ -158,8 +158,6 @@ defmodule Handoff.ResultStore do
 
   @impl true
   def handle_call({:get, dag_id, id}, _from, state) do
-    require Logger
-
     Logger.info("ResultStore get: #{inspect(:ets.tab2list(state.table))}")
 
     result =
