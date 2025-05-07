@@ -6,7 +6,11 @@ defmodule Handoff.Executor do
   """
 
   use GenServer
-  alias Handoff.{DAG, ResultStore, SimpleAllocator, SimpleResourceTracker}
+
+  alias Handoff.DAG
+  alias Handoff.ResultStore
+  alias Handoff.SimpleAllocator
+  alias Handoff.SimpleResourceTracker
 
   # Client API
 
@@ -130,25 +134,23 @@ defmodule Handoff.Executor do
   end
 
   defp visit(dag, id, sorted, visited) do
-    cond do
-      MapSet.member?(visited, id) ->
-        {sorted, visited}
+    if MapSet.member?(visited, id) do
+      {sorted, visited}
+    else
+      visited = MapSet.put(visited, id)
 
-      true ->
-        visited = MapSet.put(visited, id)
+      function = Map.get(dag.functions, id)
 
-        function = Map.get(dag.functions, id)
+      {sorted, visited} =
+        Enum.reduce(
+          function.args,
+          {sorted, visited},
+          fn dep_id, {sorted_acc, visited_acc} ->
+            visit(dag, dep_id, sorted_acc, visited_acc)
+          end
+        )
 
-        {sorted, visited} =
-          Enum.reduce(
-            function.args,
-            {sorted, visited},
-            fn dep_id, {sorted_acc, visited_acc} ->
-              visit(dag, dep_id, sorted_acc, visited_acc)
-            end
-          )
-
-        {[id | sorted], visited}
+      {[id | sorted], visited}
     end
   end
 

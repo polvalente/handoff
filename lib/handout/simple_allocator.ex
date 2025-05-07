@@ -61,7 +61,7 @@ defmodule Handoff.SimpleAllocator do
         # If a node isn't in caps or has no resources defined, default to 0 for safety.
         # However, SimpleResourceTracker.register ensures nodes have some capabilities.
         # For this logic, we'll directly use what's in caps.
-        # If caps could be sparse or incomplete, more robust fetching/defaulting would be needed here.
+        # If caps could be sparse or incomplete, more robust fetching would be needed here.
         Map.put(acc, node, Map.get(caps, node, %{cpu: 0, memory: 0}))
       end)
 
@@ -77,39 +77,41 @@ defmodule Handoff.SimpleAllocator do
             {Map.put(current_assignments, id, assigned_node), available_resources}
           else
             # Find first node that can satisfy the cost based on *current* available_resources
-            found_node_assignment =
-              Enum.find_value(nodes, fn node ->
-                node_current_resources = Map.get(available_resources, node)
-
-                if can_allocate?(node_current_resources, cost) do
-                  # Node found, update assignments and subtract resources for this node
-                  new_assignments = Map.put(current_assignments, id, node)
-                  updated_node_resources = subtract_resources(node_current_resources, cost)
-
-                  new_available_resources =
-                    Map.put(available_resources, node, updated_node_resources)
-
-                  # Return value for Enum.find_value
-                  {new_assignments, new_available_resources}
-                else
-                  # Node cannot satisfy, continue search
-                  nil
-                end
-              end)
-
-            if found_node_assignment do
-              # Node was found and resources were updated within Enum.find_value's anonymous function
-              found_node_assignment
-            else
-              # If no node has resources, assign to first node (original fallback)
-              # and don't alter available_resources for this function assignment.
-              assigned_node = List.first(nodes)
-              {Map.put(current_assignments, id, assigned_node), available_resources}
-            end
+            find_node_assignment(id, current_assignments, available_resources, cost, nodes)
           end
       end)
 
     assignments
+  end
+
+  defp find_node_assignment(id, current_assignments, available_resources, cost, nodes) do
+    found_node_assignment =
+      Enum.find_value(nodes, fn node ->
+        node_current_resources = Map.get(available_resources, node)
+
+        if can_allocate?(node_current_resources, cost) do
+          # Node found, update assignments and subtract resources for this node
+          new_assignments = Map.put(current_assignments, id, node)
+          updated_node_resources = subtract_resources(node_current_resources, cost)
+
+          new_available_resources =
+            Map.put(available_resources, node, updated_node_resources)
+
+          # Return value for Enum.find_value
+          {new_assignments, new_available_resources}
+          # Node cannot satisfy, continue search
+        end
+      end)
+
+    if found_node_assignment do
+      # Node was found and resources were updated within Enum.find_value's anonymous function
+      found_node_assignment
+    else
+      # If no node has resources, assign to first node (original fallback)
+      # and don't alter available_resources for this function assignment.
+      assigned_node = List.first(nodes)
+      {Map.put(current_assignments, id, assigned_node), available_resources}
+    end
   end
 
   # Helper function to check if node_resources can satisfy function_cost
@@ -153,48 +155,45 @@ defmodule Handoff.SimpleAllocator do
 
     # Allocate functions to balance load
     {assignments, _} =
-      Enum.reduce(sorted_functions, {%{}, initial_loads}, fn %Function{id: id, cost: cost},
-                                                             {assignments, loads} ->
-        # Find node with least load that can handle this function
-        candidates =
-          if is_nil(cost) || cost == %{} do
-            # If no resource requirements, consider all nodes
-            Enum.map(nodes, fn node -> {node, Map.get(loads, node, 0)} end)
-          else
-            # Filter nodes that have available resources
-            Enum.filter(nodes, fn node ->
-              SimpleResourceTracker.available?(node, cost)
-            end)
-            |> Enum.map(fn node -> {node, Map.get(loads, node, 0)} end)
-          end
-
-        # Sort by current load
-        sorted_candidates = Enum.sort_by(candidates, fn {_node, load} -> load end)
-
-        case sorted_candidates do
-          [] ->
-            # If no suitable node, assign to node with least load
-            {node, _} =
-              Enum.min_by(
-                Enum.map(nodes, fn n -> {n, Map.get(loads, n, 0)} end),
-                fn {_, load} -> load end
-              )
-
-            new_load =
-              Map.update(loads, node, resource_weight(cost), &(&1 + resource_weight(cost)))
-
-            {Map.put(assignments, id, node), new_load}
-
-          [{node, _} | _] ->
-            # Assign to node with least load
-            new_load =
-              Map.update(loads, node, resource_weight(cost), &(&1 + resource_weight(cost)))
-
-            {Map.put(assignments, id, node), new_load}
-        end
-      end)
+      Enum.reduce(sorted_functions, {%{}, initial_loads}, &perform_allocation(&1, &2, nodes))
 
     assignments
+  end
+
+  defp perform_allocation(%Function{id: id, cost: cost}, {assignments, loads}, nodes) do
+    # Find node with least load that can handle this function
+    candidates =
+      if is_nil(cost) || map_size(cost) == 0 do
+        # If no resource requirements, consider all nodes
+        Enum.map(nodes, fn node -> {node, Map.get(loads, node, 0)} end)
+      else
+        # Filter nodes that have available resources
+        nodes
+        |> Enum.filter(fn node ->
+          SimpleResourceTracker.available?(node, cost)
+        end)
+        |> Enum.map(fn node -> {node, Map.get(loads, node, 0)} end)
+      end
+
+    # Sort by current load
+    sorted_candidates = Enum.sort_by(candidates, fn {_node, load} -> load end)
+
+    case sorted_candidates do
+      [] ->
+        # If no suitable node, assign to node with least load
+        {node, _} = Enum.min_by(nodes, fn n -> Map.get(loads, n, 0) end)
+
+        new_load = Map.update(loads, node, resource_weight(cost), &(&1 + resource_weight(cost)))
+
+        {Map.put(assignments, id, node), new_load}
+
+      [{node, _} | _] ->
+        # Assign to node with least load
+        new_load =
+          Map.update(loads, node, resource_weight(cost), &(&1 + resource_weight(cost)))
+
+        {Map.put(assignments, id, node), new_load}
+    end
   end
 
   # Helper to calculate a weighted resource value

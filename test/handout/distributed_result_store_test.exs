@@ -1,11 +1,9 @@
 defmodule Handoff.DistributedResultStoreTest do
   use ExUnit.Case, async: false
 
-  alias Handoff.{
-    ResultStore,
-    DistributedResultStore,
-    DataLocationRegistry
-  }
+  alias Handoff.DataLocationRegistry
+  alias Handoff.DistributedResultStore
+  alias Handoff.ResultStore
 
   @dag_id_a "test_dag_a"
   @dag_id_b "test_dag_b"
@@ -45,8 +43,10 @@ defmodule Handoff.DistributedResultStoreTest do
       dag_id_b: dag_id_b,
       node2: _node2
     } do
-      # This test primarily checks local ResultStore impact and that the cast message would be scoped.
-      # True broadcast verification requires checking remote nodes, which is harder in unit tests without full cluster setup.
+      # This test primarily checks local ResultStore impact and
+      # that the cast message would be scoped.
+      # True broadcast verification requires checking remote nodes,
+      # which is harder in unit tests without full cluster setup.
       DistributedResultStore.broadcast_result(dag_id_a, :item_broadcast, "val_a")
       # Simulate a broadcast for another DAG ID for a different item, or even same item
       DistributedResultStore.broadcast_result(dag_id_b, :item_broadcast_b, "val_b")
@@ -142,7 +142,8 @@ defmodule Handoff.DistributedResultStoreTest do
 
     # Original tests, adapted slightly if needed, can be kept or refactored further.
     # For brevity, focusing on adding new scoping tests first.
-    # The following are pre-existing tests, slightly adjusted to use one of the dag_ids for clarity.
+    # The following are pre-existing tests,
+    # slightly adjusted to use one of the dag_ids for clarity.
 
     test "original: get_with_timeout returns result when available", %{dag_id_a: dag_id} do
       ResultStore.store(dag_id, :function2_orig, 100)

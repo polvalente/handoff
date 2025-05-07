@@ -67,7 +67,6 @@
         {Credo.Check.Consistency.SpaceAroundOperators, []},
         {Credo.Check.Consistency.SpaceInParentheses, []},
         {Credo.Check.Consistency.TabsOrSpaces, []},
-        {Credo.Check.Consistency.UnusedVariableNames, []},
 
         # Design checks
         {Credo.Check.Design.AliasUsage, [priority: :low, if_nested_deeper_than: 2, if_called_more_than: 1]},
@@ -107,7 +106,7 @@
         {Credo.Check.Refactor.MapJoin, []},
         {Credo.Check.Refactor.NegatedConditionsInUnless, []},
         {Credo.Check.Refactor.NegatedConditionsWithElse, []},
-        {Credo.Check.Refactor.Nesting, []},
+        {Credo.Check.Refactor.Nesting, [max_nesting: 3]},
         {Credo.Check.Refactor.UnlessWithElse, []},
         {Credo.Check.Refactor.WithClauses, []},
         {Credo.Check.Refactor.FilterFilter, []},

@@ -7,6 +7,7 @@ defmodule Handoff.ResultStore do
   """
 
   use GenServer
+
   require Logger
 
   # Client API

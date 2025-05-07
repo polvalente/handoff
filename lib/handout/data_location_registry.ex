@@ -7,6 +7,7 @@ defmodule Handoff.DataLocationRegistry do
   """
 
   use GenServer
+
   require Logger
 
   # Client API

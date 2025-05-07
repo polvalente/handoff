@@ -2,8 +2,8 @@ defmodule Handoff.ResourceTest do
   use ExUnit.Case, async: false
 
   alias Handoff.Function
-  alias Handoff.SimpleResourceTracker
   alias Handoff.SimpleAllocator
+  alias Handoff.SimpleResourceTracker
 
   setup do
     # Get test nodes if available

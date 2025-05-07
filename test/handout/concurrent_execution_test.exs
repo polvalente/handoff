@@ -3,10 +3,15 @@ defmodule Handoff.ConcurrentExecutionTest do
   # Can be async now
   use ExUnit.Case, async: true
 
-  alias Handoff.{DAG, Function, Executor, ResultStore, DataLocationRegistry}
+  alias Handoff.DAG
+  alias Handoff.DataLocationRegistry
+  alias Handoff.Executor
+  alias Handoff.Function
+  alias Handoff.ResultStore
 
   defp create_simple_dag(dag_id, val_prefix) do
-    DAG.new(dag_id)
+    dag_id
+    |> DAG.new()
     |> DAG.add_function(%Function{
       id: :source,
       args: [],
@@ -51,12 +56,15 @@ defmodule Handoff.ConcurrentExecutionTest do
       assert {:ok, "dag2_processed_dag2_source_val"} =
                ResultStore.get(dag_id_2, :process)
 
-      # Verify that an item ID from dag1 cannot be fetched using dag2's ID if that item ID was unique to dag1.
-      # Since :source and :process are used in both, their differing values for each dag_id (asserted above) prove isolation.
+      # Verify that an item ID from dag1 cannot be fetched using dag2's ID if
+      # that item ID was unique to dag1.
+      # Since :source and :process are used in both, their differing values
+      # for each dag_id (asserted above) prove isolation.
       # For an explicit non-existent cross-check, imagine dag1 had a unique item:
       # ResultStore.store(dag_id_1, :unique_to_dag1, "unique_val")
       # assert {:error, :not_found} = ResultStore.get(dag_id_2, :unique_to_dag1)
-      # This is implicitly covered by the setup clearing both DAG IDs and then only populating as defined.
+      # This is implicitly covered by the setup clearing both DAG IDs and then only
+      # populating as defined.
       # A check for a completely non-existent key in one of the DAGs is fine:
       assert {:error, :not_found} =
                ResultStore.get(dag_id_1, :completely_random_key_not_in_any_dag)
@@ -65,7 +73,8 @@ defmodule Handoff.ConcurrentExecutionTest do
 
   describe "Concurrent Distributed DAG Execution (Handoff.DistributedExecutor)" do
     defp create_dist_dag(dag_id, val_prefix, node_to_run_on) do
-      DAG.new(dag_id)
+      dag_id
+      |> DAG.new()
       |> DAG.add_function(%Function{
         id: :source_op,
         args: [],
@@ -100,8 +109,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       task_a = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_a, []) end)
       task_b = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_b, []) end)
 
-      res_a = Task.await(task_a, 15000)
-      res_b = Task.await(task_b, 15000)
+      res_a = Task.await(task_a, 15_000)
+      res_b = Task.await(task_b, 15_000)
 
       assert {:ok, %{dag_id: ^dag_a_id, results: results_a}} = res_a
       assert {:ok, %{dag_id: ^dag_b_id, results: results_b}} = res_b
@@ -144,7 +153,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       assert {:error, :timeout} =
                Handoff.get_result(non_existent_dag_id, :any_item, 50)
 
-      # (get_result uses get_with_timeout which tries to fetch, so :timeout is expected if not found after trying)
+      # (get_result uses get_with_timeout which tries to fetch,
+      # so :timeout is expected if not found after trying)
 
       # Try to get a non-existent item from an existing DAG ID
       assert {:error, :timeout} =

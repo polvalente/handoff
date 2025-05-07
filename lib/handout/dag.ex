@@ -149,9 +149,8 @@ defmodule Handoff.DAG do
     graph = :digraph.new([:acyclic])
 
     try do
-      with :ok <- add_functions(graph, dag.functions),
-           :ok <- check_for_missing_dependencies(graph) do
-        :ok
+      with :ok <- add_functions(graph, dag.functions) do
+        check_for_missing_dependencies(graph)
       end
     after
       :digraph.delete(graph)

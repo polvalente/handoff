@@ -34,7 +34,7 @@ defmodule Handoff.MixProject do
       # Development and testing dependencies
       {:ex_doc, "~> 0.29.1", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:excoveralls, "~> 0.18", only: :test}
+      {:styler, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
