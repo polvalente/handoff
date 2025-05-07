@@ -17,7 +17,8 @@ defmodule Handoff.RemoteExecutionWrapper do
   for the target node before this function is called.
   """
   def execute_and_store(dag_id, function_struct, arg_ids, orchestrator_node \\ nil) do
-    # Default orchestrator to the calling node if not specified (process distributed from origin node)
+    # Default orchestrator to the calling node
+    # if not specified (process distributed from origin node)
     # This ensures we know which node is coordinating the DAG execution
     orchestrator = orchestrator_node || Node.self()
 

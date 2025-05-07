@@ -177,8 +177,10 @@ defmodule Handoff.DistributedResultStore do
       :rpc.cast(node, ResultStore, :clear, [dag_id])
     end)
 
-    # Also clear the data location registry for the specific DAG (on this node, if it also received the cast)
-    # This might be redundant if the caller node also called clear_all_nodes, but ensures cleanup.
+    # Also clear the data location registry for the specific DAG
+    # (on this node, if it also received the cast)
+    # This might be redundant if the caller node also called
+    # clear_all_nodes, but ensures cleanup.
     DataLocationRegistry.clear(dag_id)
 
     {:noreply, state}

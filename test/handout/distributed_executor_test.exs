@@ -79,7 +79,12 @@ defmodule Handoff.DistributedExecutorTest do
         })
 
       # Execute the DAG
-      assert {:ok, %{dag_id: returned_dag_id, results: actual_results, allocations: allocations}} =
+      assert {:ok,
+              %{
+                dag_id: returned_dag_id,
+                results: actual_results,
+                allocations: allocations
+              }} =
                DistributedExecutor.execute(dag_with_functions)
 
       assert allocations == %{source: Node.self(), concatenated: node_2, final: Node.self()}
@@ -89,7 +94,8 @@ defmodule Handoff.DistributedExecutorTest do
       # Check results
       assert Map.get(actual_results, :source) == 42
 
-      # For functions executed remotely, the result is registered but not included directly in results
+      # For functions executed remotely,
+      # the result is registered but not included directly in results
       assert Map.get(actual_results, :concatenated) == :remote_executed_and_registered
 
       # We need to fetch the remote result directly
