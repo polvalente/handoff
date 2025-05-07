@@ -53,27 +53,87 @@ defmodule Handout.SimpleAllocator do
     # Sort nodes for consistent allocation order
     nodes = caps |> Map.keys() |> Enum.sort()
 
-    # Process each function and assign to the first available node
-    Enum.reduce(functions, %{}, fn %Function{id: id, cost: cost}, assignments ->
-      # Skip if function has no resource requirements
-      if is_nil(cost) || cost == %{} do
-        Map.put(assignments, id, List.first(nodes))
-      else
-        # Find first node with available resources
-        assigned_node =
-          Enum.find(nodes, fn node ->
-            SimpleResourceTracker.available?(node, cost)
-          end)
+    # Initialize available resources for each node based on initial capabilities
+    # This map will be updated as functions are assigned.
+    initial_available_resources =
+      Enum.reduce(nodes, %{}, fn node, acc ->
+        # Assuming caps is %{node_pid => %{cpu: x, memory: y}}
+        # If a node isn't in caps or has no resources defined, default to 0 for safety.
+        # However, SimpleResourceTracker.register ensures nodes have some capabilities.
+        # For this logic, we'll directly use what's in caps.
+        # If caps could be sparse or incomplete, more robust fetching/defaulting would be needed here.
+        Map.put(acc, node, Map.get(caps, node, %{cpu: 0, memory: 0}))
+      end)
 
-        if assigned_node do
-          Map.put(assignments, id, assigned_node)
-        else
-          # If no node has resources, assign to first node anyway
-          # (will fail at execution time)
-          Map.put(assignments, id, List.first(nodes))
-        end
-      end
-    end)
+    # Process each function and assign to the first available node
+    # The accumulator for the reduce is {assignments_map, current_available_resources_map}
+    {assignments, _final_resources} =
+      Enum.reduce(functions, {%{}, initial_available_resources}, fn
+        %Function{id: id, cost: cost}, {current_assignments, available_resources} ->
+          # If function has no resource requirements, assign to the first node by default
+          # and don't alter available resources for this function.
+          if is_nil(cost) || cost == %{} do
+            assigned_node = List.first(nodes)
+            {Map.put(current_assignments, id, assigned_node), available_resources}
+          else
+            # Find first node that can satisfy the cost based on *current* available_resources
+            found_node_assignment =
+              Enum.find_value(nodes, fn node ->
+                node_current_resources = Map.get(available_resources, node)
+
+                if can_allocate?(node_current_resources, cost) do
+                  # Node found, update assignments and subtract resources for this node
+                  new_assignments = Map.put(current_assignments, id, node)
+                  updated_node_resources = subtract_resources(node_current_resources, cost)
+
+                  new_available_resources =
+                    Map.put(available_resources, node, updated_node_resources)
+
+                  # Return value for Enum.find_value
+                  {new_assignments, new_available_resources}
+                else
+                  # Node cannot satisfy, continue search
+                  nil
+                end
+              end)
+
+            if found_node_assignment do
+              # Node was found and resources were updated within Enum.find_value's anonymous function
+              found_node_assignment
+            else
+              # If no node has resources, assign to first node (original fallback)
+              # and don't alter available_resources for this function assignment.
+              assigned_node = List.first(nodes)
+              {Map.put(current_assignments, id, assigned_node), available_resources}
+            end
+          end
+      end)
+
+    assignments
+  end
+
+  # Helper function to check if node_resources can satisfy function_cost
+  # Assumes resources are maps like %{cpu: x, memory: y}
+  defp can_allocate?(node_resources, function_cost) do
+    # Ensure both cpu and memory are present or default to 0 if missing in cost
+    required_cpu = Map.get(function_cost, :cpu, 0)
+    required_memory = Map.get(function_cost, :memory, 0)
+
+    # Ensure node_resources also default if a key is missing (shouldn't happen with proper init)
+    available_cpu = Map.get(node_resources, :cpu, 0)
+    available_memory = Map.get(node_resources, :memory, 0)
+
+    available_cpu >= required_cpu && available_memory >= required_memory
+  end
+
+  # Helper function to subtract function_cost from node_resources
+  defp subtract_resources(node_resources, function_cost) do
+    # This function assumes can_allocate? was true before calling
+    updated_cpu = Map.get(node_resources, :cpu, 0) - Map.get(function_cost, :cpu, 0)
+    updated_memory = Map.get(node_resources, :memory, 0) - Map.get(function_cost, :memory, 0)
+
+    # Ensure resources don't go negative, though can_allocate? should prevent this.
+    %{cpu: max(0, updated_cpu), memory: max(0, updated_memory)}
   end
 
   defp load_balanced_allocation(functions, caps) do

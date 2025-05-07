@@ -157,6 +157,10 @@ defmodule Handout.ResultStore do
 
   @impl true
   def handle_call({:get, dag_id, id}, _from, state) do
+    require Logger
+
+    Logger.info("ResultStore get: #{inspect(:ets.tab2list(state.table))}")
+
     result =
       case :ets.lookup(state.table, {dag_id, id}) do
         [{{^dag_id, ^id}, value}] -> {:ok, value}

@@ -10,8 +10,10 @@ defmodule Handout.DistributedExecutorTest do
 
   setup do
     # Register local node with some capabilities
+    [node_2 | _] = Application.get_env(:handout, :test_nodes)
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
-    :ok
+    :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000}])
+    %{node_2: node_2}
   end
 
   describe "node discovery" do
@@ -50,6 +52,60 @@ defmodule Handout.DistributedExecutorTest do
       # Check results
       assert Map.get(actual_results, :source) == 42
       assert Map.get(actual_results, :squared) == 1764
+    end
+
+    test "can execute simple DAG on two nodes", %{node_2: node_2} do
+      dag = DAG.new(self())
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :source,
+          args: [],
+          code: fn -> 42 end,
+          cost: %{cpu: 1, memory: 1950}
+        })
+        |> DAG.add_function(%Function{
+          id: :concatenated,
+          args: [:source],
+          code: &Handout.DistributedTestFunctions.g/2,
+          extra_args: [1337],
+          cost: %{cpu: 1, memory: 100}
+        })
+        |> DAG.add_function(%Function{
+          id: :final,
+          args: [:concatenated],
+          code: &Handout.DistributedTestFunctions.f/1,
+          extra_args: [],
+          cost: %{cpu: 1, memory: 50}
+        })
+
+      # Execute the DAG
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results, allocations: allocations}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert allocations == %{source: Node.self(), concatenated: node_2, final: Node.self()}
+
+      assert returned_dag_id == dag.id
+
+      # Check results
+      assert Map.get(actual_results, :source) == 42
+
+      # For functions executed remotely, the result is registered but not included directly in results
+      assert Map.get(actual_results, :concatenated) == :remote_executed_and_registered
+
+      # We need to fetch the remote result directly
+      {:ok, concatenated_result} =
+        :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
+
+      assert concatenated_result == [42, 1337]
+
+      # The final function uses the result it fetched from the remote node
+      assert Map.get(actual_results, :final) == [[42, 1337]]
+
+      # Double-check result is accessible on the remote node
+      assert {:ok, [42, 1337]} =
+               :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
     end
 
     test "can execute DAG with failure and retry" do
