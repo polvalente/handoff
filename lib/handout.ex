@@ -32,7 +32,7 @@ defmodule Handout do
       (:first_available or :load_balanced, defaults to :first_available)
 
   ## Returns
-  - {:ok, results} with a map of function IDs to results on success
+  - {:ok, %{dag_id: dag_id, results: results_map}} with the DAG ID and a map of function IDs to results on success
   - {:error, reason} on failure
   """
   def execute(dag, opts \\ []) do
@@ -51,7 +51,7 @@ defmodule Handout do
     - :max_retries - Maximum number of times to retry failed functions (default: 3)
 
   ## Returns
-  - {:ok, results} with a map of function IDs to results on success
+  - {:ok, %{dag_id: dag_id, results: results_map}} with the DAG ID and a map of function IDs to results on success
   - {:error, reason} on failure
   """
   def execute_distributed(dag, opts \\ []) do
@@ -120,34 +120,37 @@ defmodule Handout do
   end
 
   @doc """
-  Stores a function result locally and registers its location.
+  Stores a function result locally on the origin node for a specific DAG and registers its location.
   The result is stored only on the node where it was produced, not broadcast.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - function_id: The ID of the function
   - result: The result to store
   - origin_node: The node where the result was produced (defaults to current node)
   """
-  def store_result(function_id, result, origin_node \\ Node.self()) do
-    Handout.DistributedResultStore.store_distributed(function_id, result, origin_node)
+  def store_result(dag_id, function_id, result, origin_node \\ Node.self()) do
+    Handout.DistributedResultStore.store_distributed(dag_id, function_id, result, origin_node)
   end
 
   @doc """
-  Explicitly broadcasts a result to all connected nodes.
+  Explicitly broadcasts a result to all connected nodes for a specific DAG.
   Use this only when a result needs to be available everywhere.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - function_id: The ID of the function
   - result: The result to broadcast
   """
-  def broadcast_result(function_id, result) do
-    Handout.DistributedResultStore.broadcast_result(function_id, result)
+  def broadcast_result(dag_id, function_id, result) do
+    Handout.DistributedResultStore.broadcast_result(dag_id, function_id, result)
   end
 
   @doc """
-  Retrieves a result, automatically fetching it from its origin node if necessary.
+  Retrieves a result for a specific DAG, automatically fetching it from its origin node if necessary.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - id: The ID of the result/argument to retrieve
   - timeout: Maximum time to wait in milliseconds, defaults to 5000
 
@@ -155,39 +158,42 @@ defmodule Handout do
   - {:ok, result} on success
   - {:error, :timeout} if the result is not available within the timeout
   """
-  def get_result(id, timeout \\ 5000) do
-    Handout.DistributedResultStore.get_with_timeout(id, timeout)
+  def get_result(dag_id, id, timeout \\ 5000) do
+    Handout.DistributedResultStore.get_with_timeout(dag_id, id, timeout)
   end
 
   @doc """
-  Directly stores a value in the local store.
+  Directly stores a value in the local store for a specific DAG.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - id: The ID of the value
   - value: The value to store
   """
-  def store_value(id, value) do
-    Handout.ResultStore.store(id, value)
+  def store_value(dag_id, id, value) do
+    Handout.ResultStore.store(dag_id, id, value)
   end
 
   @doc """
-  Retrieves a value from the local store only.
+  Retrieves a value from the local store only for a specific DAG.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - id: The ID of the value to retrieve
 
   ## Returns
   - {:ok, value} if found locally
   - {:error, :not_found} if not found
   """
-  def get_local_value(id) do
-    Handout.ResultStore.get(id)
+  def get_local_value(dag_id, id) do
+    Handout.ResultStore.get(dag_id, id)
   end
 
   @doc """
-  Retrieves a value, with automatic remote fetching if needed.
+  Retrieves a value for a specific DAG, with automatic remote fetching if needed.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - id: The ID of the value to retrieve
   - from_node: Optional specific node to fetch from
 
@@ -195,32 +201,34 @@ defmodule Handout do
   - {:ok, value} if found or successfully fetched
   - {:error, reason} if retrieval failed
   """
-  def get_value(id, from_node \\ nil) do
-    Handout.ResultStore.get_with_fetch(id, from_node)
+  def get_value(dag_id, id, from_node \\ nil) do
+    Handout.ResultStore.get_with_fetch(dag_id, id, from_node)
   end
 
   @doc """
-  Registers the location of a data item (argument or result).
+  Registers the location of a data item (argument or result) for a specific DAG.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - data_id: The ID of the data
   - node_id: The node where the data is stored
   """
-  def register_data_location(data_id, node_id) do
-    Handout.DataLocationRegistry.register(data_id, node_id)
+  def register_data_location(dag_id, data_id, node_id) do
+    Handout.DataLocationRegistry.register(dag_id, data_id, node_id)
   end
 
   @doc """
-  Looks up where a data item (argument or result) is stored.
+  Looks up where a data item (argument or result) is stored for a specific DAG.
 
   ## Parameters
+  - dag_id: The ID of the DAG
   - data_id: The ID of the data to look up
 
   ## Returns
   - {:ok, node_id} if the data location is found
   - {:error, :not_found} if the data location is not registered
   """
-  def lookup_data_location(data_id) do
-    Handout.DataLocationRegistry.lookup(data_id)
+  def lookup_data_location(dag_id, data_id) do
+    Handout.DataLocationRegistry.lookup(dag_id, data_id)
   end
 end

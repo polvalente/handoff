@@ -43,8 +43,8 @@ defmodule Handout.Executor do
 
   @impl true
   def handle_call({:execute, dag, opts}, _from, state) do
-    # Clear any previous results
-    ResultStore.clear()
+    # Clear any previous results for this DAG
+    ResultStore.clear(dag.id)
 
     # Get node capabilities
     # For now, we're just using the local node
@@ -73,7 +73,7 @@ defmodule Handout.Executor do
             end
 
             # Store result in ETS and accumulator
-            ResultStore.store(function_id, result)
+            ResultStore.store(dag.id, function_id, result)
             {:cont, Map.put(results_acc, function_id, result)}
 
           {:error, reason} ->
@@ -88,7 +88,7 @@ defmodule Handout.Executor do
 
     case results do
       {:error, _} = error -> {:reply, error, state}
-      results -> {:reply, {:ok, results}, state}
+      results -> {:reply, {:ok, %{dag_id: dag.id, results: results}}, state}
     end
   end
 

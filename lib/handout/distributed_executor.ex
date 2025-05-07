@@ -117,13 +117,13 @@ defmodule Handout.DistributedExecutor do
 
   @impl true
   def handle_call({:execute, dag, opts}, from, state) do
-    # Clear any previous results
-    ResultStore.clear()
-    # Clear data location registry
-    DataLocationRegistry.clear()
+    # Clear any previous results for this DAG
+    ResultStore.clear(dag.id)
 
-    # Register initial arguments in the data location registry
-    # (We assume they're available on the orchestrator node)
+    # Clear data location registry for this DAG
+    DataLocationRegistry.clear(dag.id)
+
+    # Register initial arguments in the data location registry for this DAG
     dag.functions
     |> Map.values()
     |> Enum.each(fn function ->
@@ -131,12 +131,12 @@ defmodule Handout.DistributedExecutor do
       if function.args == [] or function.args == nil do
         :ok
       else
-        # Register each initial argument as available on the local node
+        # Register each initial argument as available on the local node for this DAG
         function.args
         |> Enum.each(fn arg_id ->
           # Only register if it's a literal value, not a function ID
           unless Map.has_key?(dag.functions, arg_id) do
-            DataLocationRegistry.register(arg_id, Node.self())
+            DataLocationRegistry.register(dag.id, arg_id, Node.self())
           end
         end)
       end
@@ -261,7 +261,7 @@ defmodule Handout.DistributedExecutor do
         end)
 
       if Enum.empty?(resource_errors) do
-        GenServer.reply(caller, {:ok, results})
+        GenServer.reply(caller, {:ok, %{dag_id: dag.id, results: results}})
       else
         # If any function failed due to resource constraints, return error
         GenServer.reply(caller, {:error, "Resource constraints not satisfied"})
@@ -298,7 +298,7 @@ defmodule Handout.DistributedExecutor do
           function = Map.get(dag.functions, function_id)
 
           # Prepare arguments using smart fetching strategy
-          args = fetch_arguments(function.args, executed_acc, function.node)
+          args = fetch_arguments(dag.id, function.args, executed_acc, function.node)
 
           # Execute the function on the assigned node
           Logger.debug("Executing function #{function_id} on node #{inspect(function.node)}")
@@ -307,10 +307,10 @@ defmodule Handout.DistributedExecutor do
             case execute_function_on_node(function, args, max_retries) do
               {:ok, result} ->
                 # Store result locally
-                :ok = ResultStore.store(function_id, result)
+                :ok = ResultStore.store(dag.id, function_id, result)
 
                 # Register result location in the registry
-                DataLocationRegistry.register(function_id, function.node)
+                DataLocationRegistry.register(dag.id, function_id, function.node)
 
                 # Add to executed and remove from to_be_executed
                 executed_acc = Map.put(executed_acc, function_id, result)
@@ -349,7 +349,7 @@ defmodule Handout.DistributedExecutor do
           Enum.reduce(new_pending, {MapSet.new(), %{}}, fn function_id,
                                                            {pending_acc, executed_acc} ->
             try do
-              case ResultStore.get(function_id) do
+              case ResultStore.get(dag.id, function_id) do
                 {:ok, result} ->
                   # Function completed
                   {pending_acc, Map.put(executed_acc, function_id, result)}
@@ -549,7 +549,7 @@ defmodule Handout.DistributedExecutor do
   end
 
   # New helper function to fetch arguments from appropriate nodes
-  defp fetch_arguments(arg_ids, executed_results, node) do
+  defp fetch_arguments(dag_id, arg_ids, executed_results, node) do
     Enum.map(arg_ids, fn arg_id ->
       # Check if this is an intermediate result from another function or an initial argument
       if Map.has_key?(executed_results, arg_id) do
@@ -558,9 +558,9 @@ defmodule Handout.DistributedExecutor do
 
         # Cache the result locally on the node that will use it
         if node != Node.self() do
-          :rpc.call(node, ResultStore, :store, [arg_id, result])
+          :rpc.call(node, ResultStore, :store, [dag_id, arg_id, result])
         else
-          ResultStore.store(arg_id, result)
+          ResultStore.store(dag_id, arg_id, result)
         end
 
         result
@@ -568,21 +568,24 @@ defmodule Handout.DistributedExecutor do
         # This is an initial argument, fetch it from its location
         if node == Node.self() do
           # For local execution, fetch directly
-          case ResultStore.get_with_fetch(arg_id) do
-            {:ok, value} -> value
-            {:error, _reason} -> raise "Argument #{arg_id} not found in any location"
+          case ResultStore.get_with_fetch(dag_id, arg_id) do
+            {:ok, value} ->
+              value
+
+            {:error, _reason} ->
+              raise "Argument #{arg_id} for DAG #{dag_id} not found in any location"
           end
         else
           # For remote execution, tell the remote node to fetch
-          case :rpc.call(node, ResultStore, :get_with_fetch, [arg_id]) do
+          case :rpc.call(node, ResultStore, :get_with_fetch, [dag_id, arg_id]) do
             {:ok, value} ->
               value
 
             {:error, reason} ->
-              raise "Argument #{arg_id} not found: #{inspect(reason)}"
+              raise "Argument #{arg_id} for DAG #{dag_id} not found: #{inspect(reason)}"
 
             {:badrpc, reason} ->
-              raise "Failed to fetch argument #{arg_id} from node #{node}: #{inspect(reason)}"
+              raise "Failed to fetch argument #{arg_id} for DAG #{dag_id} from node #{node}: #{inspect(reason)}"
           end
         end
       end
