@@ -7,7 +7,7 @@ defmodule Handout.DistributedExecutor do
 
   use GenServer
   require Logger
-  alias Handout.{DAG, ResultStore, SimpleResourceTracker}
+  alias Handout.{DAG, ResultStore, SimpleResourceTracker, DataLocationRegistry}
 
   # Client API
 
@@ -119,6 +119,28 @@ defmodule Handout.DistributedExecutor do
   def handle_call({:execute, dag, opts}, from, state) do
     # Clear any previous results
     ResultStore.clear()
+    # Clear data location registry
+    DataLocationRegistry.clear()
+
+    # Register initial arguments in the data location registry
+    # (We assume they're available on the orchestrator node)
+    dag.functions
+    |> Map.values()
+    |> Enum.each(fn function ->
+      # For functions with no arguments (source functions), we don't need to register anything
+      if function.args == [] or function.args == nil do
+        :ok
+      else
+        # Register each initial argument as available on the local node
+        function.args
+        |> Enum.each(fn arg_id ->
+          # Only register if it's a literal value, not a function ID
+          unless Map.has_key?(dag.functions, arg_id) do
+            DataLocationRegistry.register(arg_id, Node.self())
+          end
+        end)
+      end
+    end)
 
     # If no nodes are known, discover them
     state =
@@ -275,8 +297,8 @@ defmodule Handout.DistributedExecutor do
                                                                               executed_acc} ->
           function = Map.get(dag.functions, function_id)
 
-          # Prepare arguments from executed results
-          args = Enum.map(function.args, fn arg_id -> Map.get(executed_acc, arg_id) end)
+          # Prepare arguments using smart fetching strategy
+          args = fetch_arguments(function.args, executed_acc, function.node)
 
           # Execute the function on the assigned node
           Logger.debug("Executing function #{function_id} on node #{inspect(function.node)}")
@@ -284,8 +306,12 @@ defmodule Handout.DistributedExecutor do
           try do
             case execute_function_on_node(function, args, max_retries) do
               {:ok, result} ->
-                # Store result and continue
+                # Store result locally
                 :ok = ResultStore.store(function_id, result)
+
+                # Register result location in the registry
+                DataLocationRegistry.register(function_id, function.node)
+
                 # Add to executed and remove from to_be_executed
                 executed_acc = Map.put(executed_acc, function_id, result)
                 to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
@@ -520,5 +546,46 @@ defmodule Handout.DistributedExecutor do
 
         {[id | sorted], visited}
     end
+  end
+
+  # New helper function to fetch arguments from appropriate nodes
+  defp fetch_arguments(arg_ids, executed_results, node) do
+    Enum.map(arg_ids, fn arg_id ->
+      # Check if this is an intermediate result from another function or an initial argument
+      if Map.has_key?(executed_results, arg_id) do
+        # This is an intermediate result from another function
+        result = Map.get(executed_results, arg_id)
+
+        # Cache the result locally on the node that will use it
+        if node != Node.self() do
+          :rpc.call(node, ResultStore, :store, [arg_id, result])
+        else
+          ResultStore.store(arg_id, result)
+        end
+
+        result
+      else
+        # This is an initial argument, fetch it from its location
+        if node == Node.self() do
+          # For local execution, fetch directly
+          case ResultStore.get_with_fetch(arg_id) do
+            {:ok, value} -> value
+            {:error, _reason} -> raise "Argument #{arg_id} not found in any location"
+          end
+        else
+          # For remote execution, tell the remote node to fetch
+          case :rpc.call(node, ResultStore, :get_with_fetch, [arg_id]) do
+            {:ok, value} ->
+              value
+
+            {:error, reason} ->
+              raise "Argument #{arg_id} not found: #{inspect(reason)}"
+
+            {:badrpc, reason} ->
+              raise "Failed to fetch argument #{arg_id} from node #{node}: #{inspect(reason)}"
+          end
+        end
+      end
+    end)
   end
 end

@@ -1,6 +1,6 @@
 import Config
 
-config :logger, level: :warning
+config :logger, level: :info
 
 # Configure ExCoveralls for test coverage
 config :excoveralls,

@@ -9,8 +9,6 @@ defmodule Handout.DistributedExecutorTest do
 
   setup do
     # Start the application supervisors
-    start_supervised!(Handout.Supervisor)
-
     # Register local node with some capabilities
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
 

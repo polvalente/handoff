@@ -7,7 +7,7 @@ defmodule Handout.DistributedResultStore do
 
   use GenServer
   require Logger
-  alias Handout.ResultStore
+  alias Handout.{ResultStore, DataLocationRegistry}
 
   # Client API
 
@@ -16,7 +16,8 @@ defmodule Handout.DistributedResultStore do
   end
 
   @doc """
-  Stores a function result and broadcasts it to all connected nodes.
+  Stores a function result locally on the node where it was produced.
+  Registers the result location in the DataLocationRegistry but does not broadcast it.
 
   ## Parameters
   - function_id: The ID of the function
@@ -24,19 +25,37 @@ defmodule Handout.DistributedResultStore do
   - origin_node: The node where the result was produced
   """
   def store_distributed(function_id, result, origin_node \\ Node.self()) do
-    # Store locally first
-    ResultStore.store(function_id, result)
-
-    # Broadcast to other nodes if this is the origin node
+    # Store locally if this is the origin node
     if origin_node == Node.self() do
-      GenServer.cast(__MODULE__, {:broadcast_result, function_id, result})
+      ResultStore.store(function_id, result)
     end
+
+    # Register the result location
+    DataLocationRegistry.register(function_id, origin_node)
 
     :ok
   end
 
   @doc """
-  Retrieves a result, potentially waiting for it to be available.
+  Explicitly broadcasts a result to all connected nodes.
+  Use this only when a result needs to be available on all nodes.
+
+  ## Parameters
+  - function_id: The ID of the function
+  - result: The result to broadcast
+  """
+  def broadcast_result(function_id, result) do
+    # Store locally first
+    ResultStore.store(function_id, result)
+
+    # Broadcast to other nodes
+    GenServer.cast(__MODULE__, {:broadcast_result, function_id, result})
+
+    :ok
+  end
+
+  @doc """
+  Retrieves a result, potentially fetching it from its origin node.
 
   ## Parameters
   - function_id: The ID of the function
@@ -63,12 +82,13 @@ defmodule Handout.DistributedResultStore do
   end
 
   defp wait_loop(function_id, start, timeout) do
-    case ResultStore.get(function_id) do
+    # Try to get value with automatic remote fetching
+    case ResultStore.get_with_fetch(function_id) do
       {:ok, result} ->
-        # Result found
+        # Result found or fetched
         {:ok, result}
 
-      {:error, :not_found} ->
+      {:error, _reason} ->
         # Check if we've exceeded timeout
         now = System.monotonic_time(:millisecond)
 
@@ -100,35 +120,20 @@ defmodule Handout.DistributedResultStore do
 
   ## Parameters
   - function_ids: List of function IDs to synchronize
-  - target_nodes: List of nodes to query, defaults to all connected nodes
 
   ## Returns
   - Map of function_id => result for successfully synchronized results
   """
-  def synchronize(function_ids, target_nodes \\ nil) do
-    nodes = target_nodes || [Node.self() | Node.list()]
-
-    # Query each node for each function result
+  def synchronize(function_ids) do
+    # Use get_with_fetch to find and sync results
     Enum.reduce(function_ids, %{}, fn function_id, acc ->
-      Enum.reduce_while(nodes, acc, fn node, inner_acc ->
-        case :rpc.call(node, Handout.ResultStore, :get, [function_id]) do
-          {:ok, result} ->
-            # Store result locally and skip remaining nodes
-            ResultStore.store(function_id, result)
-            {:halt, Map.put(inner_acc, function_id, result)}
+      case ResultStore.get_with_fetch(function_id) do
+        {:ok, result} ->
+          Map.put(acc, function_id, result)
 
-          {:error, :not_found} ->
-            # Try next node
-            {:cont, inner_acc}
-
-          {:badrpc, reason} ->
-            Logger.warning(
-              "Error synchronizing result for function #{function_id} from node #{inspect(node)}: #{inspect(reason)}"
-            )
-
-            {:cont, inner_acc}
-        end
-      end)
+        {:error, _} ->
+          acc
+      end
     end)
   end
 
@@ -147,7 +152,7 @@ defmodule Handout.DistributedResultStore do
     # Send the result to all other nodes
     Node.list()
     |> Enum.each(fn node ->
-      :rpc.cast(node, Handout.ResultStore, :store, [function_id, result])
+      :rpc.cast(node, ResultStore, :store, [function_id, result])
     end)
 
     {:noreply, state}
@@ -158,23 +163,20 @@ defmodule Handout.DistributedResultStore do
     # Send clear command to all other nodes
     Node.list()
     |> Enum.each(fn node ->
-      :rpc.cast(node, Handout.ResultStore, :clear, [])
+      :rpc.cast(node, ResultStore, :clear, [])
     end)
+
+    # Also clear the data location registry
+    DataLocationRegistry.clear()
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:nodeup, node}, state) do
-    Logger.info("Node #{inspect(node)} connected, synchronizing results")
-
-    # Get all local results
-    all_results = get_all_local_results()
-
-    # Send all results to the new node
-    Enum.each(all_results, fn {function_id, result} ->
-      :rpc.cast(node, Handout.ResultStore, :store, [function_id, result])
-    end)
+    Logger.info("Node #{inspect(node)} connected")
+    # Don't automatically synchronize results anymore
+    # Each node will fetch results as needed
 
     {:noreply, state}
   end
@@ -184,17 +186,5 @@ defmodule Handout.DistributedResultStore do
     Logger.warning("Node #{inspect(node)} disconnected")
 
     {:noreply, state}
-  end
-
-  # Private helpers
-
-  defp get_all_local_results do
-    # This is a simple implementation that assumes the ETS table structure
-    # In a real implementation, you might want a proper API in ResultStore
-    try do
-      :ets.tab2list(:handout_results)
-    rescue
-      ArgumentError -> []
-    end
   end
 end

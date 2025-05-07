@@ -20,6 +20,7 @@ defmodule Handout.Supervisor do
     children = [
       {Handout.ResultStore, []},
       {Handout.SimpleResourceTracker, []},
+      {Handout.DataLocationRegistry, []},
       {Handout.Executor, []},
       {Handout.DistributedExecutor, opts},
       {Handout.DistributedResultStore, []}

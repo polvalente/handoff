@@ -120,7 +120,8 @@ defmodule Handout do
   end
 
   @doc """
-  Stores a function result and broadcasts it to all connected nodes.
+  Stores a function result locally and registers its location.
+  The result is stored only on the node where it was produced, not broadcast.
 
   ## Parameters
   - function_id: The ID of the function
@@ -132,17 +133,94 @@ defmodule Handout do
   end
 
   @doc """
-  Retrieves a result, potentially waiting for it to be available.
+  Explicitly broadcasts a result to all connected nodes.
+  Use this only when a result needs to be available everywhere.
 
   ## Parameters
   - function_id: The ID of the function
+  - result: The result to broadcast
+  """
+  def broadcast_result(function_id, result) do
+    Handout.DistributedResultStore.broadcast_result(function_id, result)
+  end
+
+  @doc """
+  Retrieves a result, automatically fetching it from its origin node if necessary.
+
+  ## Parameters
+  - id: The ID of the result/argument to retrieve
   - timeout: Maximum time to wait in milliseconds, defaults to 5000
 
   ## Returns
   - {:ok, result} on success
   - {:error, :timeout} if the result is not available within the timeout
   """
-  def get_result(function_id, timeout \\ 5000) do
-    Handout.DistributedResultStore.get_with_timeout(function_id, timeout)
+  def get_result(id, timeout \\ 5000) do
+    Handout.DistributedResultStore.get_with_timeout(id, timeout)
+  end
+
+  @doc """
+  Directly stores a value in the local store.
+
+  ## Parameters
+  - id: The ID of the value
+  - value: The value to store
+  """
+  def store_value(id, value) do
+    Handout.ResultStore.store(id, value)
+  end
+
+  @doc """
+  Retrieves a value from the local store only.
+
+  ## Parameters
+  - id: The ID of the value to retrieve
+
+  ## Returns
+  - {:ok, value} if found locally
+  - {:error, :not_found} if not found
+  """
+  def get_local_value(id) do
+    Handout.ResultStore.get(id)
+  end
+
+  @doc """
+  Retrieves a value, with automatic remote fetching if needed.
+
+  ## Parameters
+  - id: The ID of the value to retrieve
+  - from_node: Optional specific node to fetch from
+
+  ## Returns
+  - {:ok, value} if found or successfully fetched
+  - {:error, reason} if retrieval failed
+  """
+  def get_value(id, from_node \\ nil) do
+    Handout.ResultStore.get_with_fetch(id, from_node)
+  end
+
+  @doc """
+  Registers the location of a data item (argument or result).
+
+  ## Parameters
+  - data_id: The ID of the data
+  - node_id: The node where the data is stored
+  """
+  def register_data_location(data_id, node_id) do
+    Handout.DataLocationRegistry.register(data_id, node_id)
+  end
+
+  @doc """
+  Looks up where a data item (argument or result) is stored.
+
+  ## Parameters
+  - data_id: The ID of the data to look up
+
+  ## Returns
+  - {:ok, node_id} if the data location is found
+  - {:error, :not_found} if the data location is not registered
+  """
+  def lookup_data_location(data_id) do
+    Handout.DataLocationRegistry.lookup(data_id)
   end
 end

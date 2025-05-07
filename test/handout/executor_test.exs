@@ -2,11 +2,6 @@ defmodule Handout.ExecutorTest do
   use ExUnit.Case, async: false
   alias Handout.{Function, DAG, Executor, ResultStore}
 
-  setup do
-    start_supervised!(Handout.Supervisor)
-    :ok
-  end
-
   describe "single-node execution" do
     test "executes a simple DAG in dependency order" do
       # Create a simple DAG: A -> B -> C

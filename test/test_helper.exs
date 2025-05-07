@@ -15,7 +15,7 @@ end
 # Set up code paths and ensure applications are started
 for node <- [node2, node3] do
   true = :erpc.call(node, :code, :set_path, [:code.get_path()])
-  {:ok, _} = :erpc.call(node, :application, :ensure_all_started, [:elixir])
+  {:ok, _} = :erpc.call(node, :application, :ensure_all_started, [:handout])
 end
 
 # Store node names in application environment for tests to use
