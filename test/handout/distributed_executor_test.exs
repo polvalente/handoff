@@ -1,26 +1,16 @@
 defmodule Handout.DistributedExecutorTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Handout.{
     DAG,
     Function,
     DistributedExecutor,
-    SimpleResourceTracker,
-    ResultStore,
-    DataLocationRegistry
+    SimpleResourceTracker
   }
 
-  # Default DAG ID for most tests - use string
-  @dag_id "test_dag_id"
-
   setup do
-    # Start the application supervisors
     # Register local node with some capabilities
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
-    # Clear stores for the default test_dag_id
-    ResultStore.clear(@dag_id)
-    DataLocationRegistry.clear(@dag_id)
-
     :ok
   end
 
@@ -34,7 +24,7 @@ defmodule Handout.DistributedExecutorTest do
 
   describe "distributed execution" do
     test "can execute simple DAG on local node" do
-      dag = DAG.new(@dag_id)
+      dag = DAG.new(self())
 
       dag_with_functions =
         dag
@@ -64,7 +54,7 @@ defmodule Handout.DistributedExecutorTest do
 
     test "can execute DAG with failure and retry" do
       # Use specific DAG ID
-      dag = DAG.new(@dag_id)
+      dag = DAG.new(self())
       # We'll use an agent to track execution attempts
       {:ok, agent} = Agent.start_link(fn -> %{count: 0} end)
 
@@ -118,12 +108,8 @@ defmodule Handout.DistributedExecutorTest do
 
   describe "resource management" do
     test "respects resource limits" do
-      dag1_id = "dag_resource_1"
-      dag2_id = "dag_resource_2"
-      ResultStore.clear(dag1_id)
-      DataLocationRegistry.clear(dag1_id)
-      ResultStore.clear(dag2_id)
-      DataLocationRegistry.clear(dag2_id)
+      dag1_id = {self(), 1}
+      dag2_id = {self(), 2}
 
       # Define functions that require more resources than available
       dag_fail =

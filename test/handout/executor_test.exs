@@ -1,5 +1,5 @@
 defmodule Handout.ExecutorTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   alias Handout.{Function, DAG, Executor, ResultStore}
 
   describe "single-node execution" do
@@ -7,7 +7,6 @@ defmodule Handout.ExecutorTest do
       # Create a simple DAG: A -> B -> C
       # Where A = 1, B = A + 1, C = B * 2
 
-      # Gets an auto-generated ID
       dag = Handout.DAG.new()
 
       dag_with_functions =
@@ -46,7 +45,6 @@ defmodule Handout.ExecutorTest do
       # Create a diamond DAG: A -> B -> D
       #                       \-> C -/
 
-      # Gets an auto-generated ID
       dag = Handout.DAG.new()
 
       dag_with_functions =
@@ -83,7 +81,6 @@ defmodule Handout.ExecutorTest do
     end
 
     test "handles a DAG with extra_args" do
-      # Gets an auto-generated ID
       dag = Handout.DAG.new()
 
       dag_with_functions =
@@ -109,7 +106,6 @@ defmodule Handout.ExecutorTest do
     end
 
     test "handles execution errors" do
-      # Gets an auto-generated ID
       dag = Handout.DAG.new()
 
       dag_with_functions =
@@ -131,7 +127,6 @@ defmodule Handout.ExecutorTest do
 
     test "rejects invalid DAGs" do
       # Create a cyclic DAG: A -> B -> A
-      # Gets an auto-generated ID
       dag = Handout.DAG.new()
 
       dag_with_functions =

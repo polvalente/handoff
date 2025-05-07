@@ -1,20 +1,9 @@
 defmodule Handout.ConcurrentExecutionTest do
   # async: false for controlled concurrency testing initially
-  use ExUnit.Case, async: false
+  # Can be async now
+  use ExUnit.Case, async: true
 
   alias Handout.{DAG, Function, Executor, ResultStore, DataLocationRegistry}
-
-  @dag_id_c1 "concurrent_dag_1"
-  @dag_id_c2 "concurrent_dag_2"
-
-  setup do
-    # Clear stores for these specific DAG IDs
-    ResultStore.clear(@dag_id_c1)
-    DataLocationRegistry.clear(@dag_id_c1)
-    ResultStore.clear(@dag_id_c2)
-    DataLocationRegistry.clear(@dag_id_c2)
-    :ok
-  end
 
   defp create_simple_dag(dag_id, val_prefix) do
     DAG.new(dag_id)
@@ -32,8 +21,11 @@ defmodule Handout.ConcurrentExecutionTest do
 
   describe "Concurrent Local DAG Execution (Handout.Executor)" do
     test "executes two simple DAGs concurrently with data isolation" do
-      dag1 = create_simple_dag(@dag_id_c1, "dag1")
-      dag2 = create_simple_dag(@dag_id_c2, "dag2")
+      dag_id_1 = {self(), 1}
+      dag_id_2 = {self(), 2}
+
+      dag1 = create_simple_dag(dag_id_1, "dag1")
+      dag2 = create_simple_dag(dag_id_2, "dag2")
 
       # Execute DAGs. GenServer calls to Executor are synchronous,
       # so true parallelism isn't tested here, but data isolation is.
@@ -42,51 +34,36 @@ defmodule Handout.ConcurrentExecutionTest do
       {:ok, res2} = Executor.execute(dag2)
 
       # Check DAG 1 results and ID
-      assert res1.dag_id == @dag_id_c1
+      assert res1.dag_id == dag_id_1
       assert res1.results[:source] == "dag1_source_val"
       assert res1.results[:process] == "dag1_processed_dag1_source_val"
 
       # Check DAG 2 results and ID
-      assert res2.dag_id == @dag_id_c2
+      assert res2.dag_id == dag_id_2
       assert res2.results[:source] == "dag2_source_val"
       assert res2.results[:process] == "dag2_processed_dag2_source_val"
 
       # Verify data isolation in ResultStore
-      assert {:ok, "dag1_source_val"} = ResultStore.get(@dag_id_c1, :source)
-      assert {:ok, "dag1_processed_dag1_source_val"} = ResultStore.get(@dag_id_c1, :process)
-      assert {:ok, "dag2_source_val"} = ResultStore.get(@dag_id_c2, :source)
-      assert {:ok, "dag2_processed_dag2_source_val"} = ResultStore.get(@dag_id_c2, :process)
+      assert {:ok, "dag1_source_val"} = ResultStore.get(dag_id_1, :source)
+      assert {:ok, "dag1_processed_dag1_source_val"} = ResultStore.get(dag_id_1, :process)
+      assert {:ok, "dag2_source_val"} = ResultStore.get(dag_id_2, :source)
+
+      assert {:ok, "dag2_processed_dag2_source_val"} =
+               ResultStore.get(dag_id_2, :process)
 
       # Verify that an item ID from dag1 cannot be fetched using dag2's ID if that item ID was unique to dag1.
       # Since :source and :process are used in both, their differing values for each dag_id (asserted above) prove isolation.
       # For an explicit non-existent cross-check, imagine dag1 had a unique item:
-      # ResultStore.store(@dag_id_c1, :unique_to_dag1, "unique_val")
-      # assert {:error, :not_found} = ResultStore.get(@dag_id_c2, :unique_to_dag1)
+      # ResultStore.store(dag_id_1, :unique_to_dag1, "unique_val")
+      # assert {:error, :not_found} = ResultStore.get(dag_id_2, :unique_to_dag1)
       # This is implicitly covered by the setup clearing both DAG IDs and then only populating as defined.
       # A check for a completely non-existent key in one of the DAGs is fine:
       assert {:error, :not_found} =
-               ResultStore.get(@dag_id_c1, :completely_random_key_not_in_any_dag)
+               ResultStore.get(dag_id_1, :completely_random_key_not_in_any_dag)
     end
   end
 
   describe "Concurrent Distributed DAG Execution (Handout.DistributedExecutor)" do
-    setup tags do
-      if System.get_env("CI") && tags[:skip_in_ci] do
-        {:skip, "Skipping distributed test in CI without full cluster setup"}
-      else
-        # Ensure nodes are "known" for allocation, even if it's just local node for some tests.
-        # DistributedExecutor.discover_nodes() # This might be needed if tests don't run on self().
-        # SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000}) # Already in global setup for some tests
-        # For these tests, we assume local node execution primarily, focusing on DAG ID isolation.
-        # Clear any data from previous tests for specific DAG IDs used here.
-        ResultStore.clear("dist_dag_A")
-        DataLocationRegistry.clear("dist_dag_A")
-        ResultStore.clear("dist_dag_B")
-        DataLocationRegistry.clear("dist_dag_B")
-        :ok
-      end
-    end
-
     defp create_dist_dag(dag_id, val_prefix, node_to_run_on) do
       DAG.new(dag_id)
       |> DAG.add_function(%Function{
@@ -108,8 +85,10 @@ defmodule Handout.ConcurrentExecutionTest do
 
     # @tag :skip_in_ci # Skip if full cluster setup is problematic in CI
     test "executes two simple DAGs concurrently with data isolation via DistributedExecutor" do
-      dag_a_id = "dist_dag_A"
-      dag_b_id = "dist_dag_B"
+      # Use test PID
+      dag_a_id = {self(), 1}
+      # Use a spawned PID for the second DAG
+      dag_b_id = {self(), 2}
 
       # For this test, we'll have both run on Node.self() to simplify,
       # focusing on data isolation via DAG ID with DistributedExecutor.
@@ -151,13 +130,11 @@ defmodule Handout.ConcurrentExecutionTest do
 
   describe "API Error Handling with DAG IDs" do
     test "Handout.get_result returns :not_found for non-existent dag_id or item_id" do
-      dag_id_exists = "existing_dag_for_error_test"
+      # Use test PID
+      dag_id_exists = {self(), 1}
       item_id_exists_for_dag = :item_for_error_test
-
-      ResultStore.clear(dag_id_exists)
-      DataLocationRegistry.clear(dag_id_exists)
-      ResultStore.clear("non_existent_dag_id_for_error")
-      DataLocationRegistry.clear("non_existent_dag_id_for_error")
+      # A different PID
+      non_existent_dag_id = {self(), 2}
 
       # Store an item for a known DAG ID to make the DAG ID "valid" in some sense
       ResultStore.store(dag_id_exists, item_id_exists_for_dag, "some_value")
@@ -165,7 +142,7 @@ defmodule Handout.ConcurrentExecutionTest do
 
       # Try to get result with a completely non-existent DAG ID
       assert {:error, :timeout} =
-               Handout.get_result("non_existent_dag_id_for_error", :any_item, 50)
+               Handout.get_result(non_existent_dag_id, :any_item, 50)
 
       # (get_result uses get_with_timeout which tries to fetch, so :timeout is expected if not found after trying)
 
