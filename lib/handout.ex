@@ -1,6 +1,6 @@
-defmodule Handout do
+defmodule Handoff do
   @moduledoc """
-  Handout is a library for building and executing Directed Acyclic Graphs (DAGs) of functions.
+  Handoff is a library for building and executing Directed Acyclic Graphs (DAGs) of functions.
 
   It provides tools for defining computation graphs, managing resources, and executing
   the graphs in a distributed environment.
@@ -10,16 +10,16 @@ defmodule Handout do
   Creates a new DAG instance.
   """
   def new do
-    Handout.DAG.new()
+    Handoff.DAG.new()
   end
 
   @doc """
-  Starts the Handout supervision tree.
+  Starts the Handoff supervision tree.
 
   Must be called before executing any DAGs.
   """
   def start(opts \\ []) do
-    Handout.Supervisor.start_link(opts)
+    Handoff.Supervisor.start_link(opts)
   end
 
   @doc """
@@ -37,7 +37,7 @@ defmodule Handout do
   """
   def execute(dag, opts \\ []) do
     # Use the local executor by default
-    Handout.Executor.execute(dag, opts)
+    Handoff.Executor.execute(dag, opts)
   end
 
   @doc """
@@ -55,7 +55,7 @@ defmodule Handout do
   - {:error, reason} on failure
   """
   def execute_distributed(dag, opts \\ []) do
-    Handout.DistributedExecutor.execute(dag, opts)
+    Handoff.DistributedExecutor.execute(dag, opts)
   end
 
   @doc """
@@ -67,11 +67,11 @@ defmodule Handout do
 
   ## Example
   ```
-  Handout.register_node(Node.self(), %{cpu: 4, memory: 8000})
+  Handoff.register_node(Node.self(), %{cpu: 4, memory: 8000})
   ```
   """
   def register_node(node, caps) do
-    Handout.SimpleResourceTracker.register(node, caps)
+    Handoff.SimpleResourceTracker.register(node, caps)
   end
 
   @doc """
@@ -81,7 +81,7 @@ defmodule Handout do
   - {:ok, discovered} with a map of node names to their capabilities
   """
   def discover_nodes do
-    Handout.DistributedExecutor.discover_nodes()
+    Handoff.DistributedExecutor.discover_nodes()
   end
 
   @doc """
@@ -92,11 +92,11 @@ defmodule Handout do
 
   ## Example
   ```
-  Handout.register_local_node(%{cpu: 8, memory: 16000})
+  Handoff.register_local_node(%{cpu: 8, memory: 16000})
   ```
   """
   def register_local_node(caps) do
-    Handout.DistributedExecutor.register_local_node(caps)
+    Handoff.DistributedExecutor.register_local_node(caps)
   end
 
   @doc """
@@ -112,11 +112,11 @@ defmodule Handout do
 
   ## Example
   ```
-  Handout.resources_available?(Node.self(), %{cpu: 2, memory: 4000})
+  Handoff.resources_available?(Node.self(), %{cpu: 2, memory: 4000})
   ```
   """
   def resources_available?(node, req) do
-    Handout.SimpleResourceTracker.available?(node, req)
+    Handoff.SimpleResourceTracker.available?(node, req)
   end
 
   @doc """
@@ -130,7 +130,7 @@ defmodule Handout do
   - origin_node: The node where the result was produced (defaults to current node)
   """
   def store_result(dag_id, function_id, result, origin_node \\ Node.self()) do
-    Handout.DistributedResultStore.store_distributed(dag_id, function_id, result, origin_node)
+    Handoff.DistributedResultStore.store_distributed(dag_id, function_id, result, origin_node)
   end
 
   @doc """
@@ -143,7 +143,7 @@ defmodule Handout do
   - result: The result to broadcast
   """
   def broadcast_result(dag_id, function_id, result) do
-    Handout.DistributedResultStore.broadcast_result(dag_id, function_id, result)
+    Handoff.DistributedResultStore.broadcast_result(dag_id, function_id, result)
   end
 
   @doc """
@@ -159,7 +159,7 @@ defmodule Handout do
   - {:error, :timeout} if the result is not available within the timeout
   """
   def get_result(dag_id, id, timeout \\ 5000) do
-    Handout.DistributedResultStore.get_with_timeout(dag_id, id, timeout)
+    Handoff.DistributedResultStore.get_with_timeout(dag_id, id, timeout)
   end
 
   @doc """
@@ -171,7 +171,7 @@ defmodule Handout do
   - value: The value to store
   """
   def store_value(dag_id, id, value) do
-    Handout.ResultStore.store(dag_id, id, value)
+    Handoff.ResultStore.store(dag_id, id, value)
   end
 
   @doc """
@@ -186,7 +186,7 @@ defmodule Handout do
   - {:error, :not_found} if not found
   """
   def get_local_value(dag_id, id) do
-    Handout.ResultStore.get(dag_id, id)
+    Handoff.ResultStore.get(dag_id, id)
   end
 
   @doc """
@@ -202,7 +202,7 @@ defmodule Handout do
   - {:error, reason} if retrieval failed
   """
   def get_value(dag_id, id, from_node \\ nil) do
-    Handout.ResultStore.get_with_fetch(dag_id, id, from_node)
+    Handoff.ResultStore.get_with_fetch(dag_id, id, from_node)
   end
 
   @doc """
@@ -214,7 +214,7 @@ defmodule Handout do
   - node_id: The node where the data is stored
   """
   def register_data_location(dag_id, data_id, node_id) do
-    Handout.DataLocationRegistry.register(dag_id, data_id, node_id)
+    Handoff.DataLocationRegistry.register(dag_id, data_id, node_id)
   end
 
   @doc """
@@ -229,6 +229,6 @@ defmodule Handout do
   - {:error, :not_found} if the data location is not registered
   """
   def lookup_data_location(dag_id, data_id) do
-    Handout.DataLocationRegistry.lookup(dag_id, data_id)
+    Handoff.DataLocationRegistry.lookup(dag_id, data_id)
   end
 end

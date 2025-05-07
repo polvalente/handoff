@@ -1,7 +1,7 @@
-defmodule Handout.DistributedExecutorTest do
+defmodule Handoff.DistributedExecutorTest do
   use ExUnit.Case, async: true
 
-  alias Handout.{
+  alias Handoff.{
     DAG,
     Function,
     DistributedExecutor,
@@ -10,7 +10,7 @@ defmodule Handout.DistributedExecutorTest do
 
   setup do
     # Register local node with some capabilities
-    [node_2 | _] = Application.get_env(:handout, :test_nodes)
+    [node_2 | _] = Application.get_env(:handoff, :test_nodes)
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
     :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000}])
     %{node_2: node_2}
@@ -68,14 +68,14 @@ defmodule Handout.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :concatenated,
           args: [:source],
-          code: &Handout.DistributedTestFunctions.g/2,
+          code: &Handoff.DistributedTestFunctions.g/2,
           extra_args: [1337],
           cost: %{cpu: 1, memory: 100}
         })
         |> DAG.add_function(%Function{
           id: :final,
           args: [:concatenated],
-          code: &Handout.DistributedTestFunctions.f/1,
+          code: &Handoff.DistributedTestFunctions.f/1,
           extra_args: [],
           cost: %{cpu: 1, memory: 50}
         })
@@ -96,7 +96,7 @@ defmodule Handout.DistributedExecutorTest do
 
       # We need to fetch the remote result directly
       {:ok, concatenated_result} =
-        :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
+        :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :concatenated])
 
       assert concatenated_result == [42, 1337]
 
@@ -105,7 +105,7 @@ defmodule Handout.DistributedExecutorTest do
 
       # Double-check result is accessible on the remote node
       assert {:ok, [42, 1337]} =
-               :rpc.call(node_2, Handout.ResultStore, :get, [dag.id, :concatenated])
+               :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :concatenated])
     end
 
     test "can execute DAG with failure and retry" do

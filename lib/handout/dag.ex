@@ -1,8 +1,8 @@
-defmodule Handout.DAG do
+defmodule Handoff.DAG do
   @moduledoc ~S"""
   Provides functionality for building and validating directed acyclic graphs (DAGs) of functions.
 
-  This module is the core of the Handout library, allowing you to:
+  This module is the core of the Handoff library, allowing you to:
 
   1. Create empty computation graphs
   2. Add functions to the graph with their dependencies
@@ -10,30 +10,30 @@ defmodule Handout.DAG do
 
   ## DAG Structure
 
-  A DAG in Handout is represented as a map with:
+  A DAG in Handoff is represented as a map with:
 
-  * `:functions` - A map of function IDs to `Handout.Function` structs
+  * `:functions` - A map of function IDs to `Handoff.Function` structs
 
   ## Examples
 
   ```elixir
   # Create a new DAG
-  dag = Handout.DAG.new()
+  dag = Handoff.DAG.new()
 
   # Define functions
-  source = %Handout.Function{
+  source = %Handoff.Function{
     id: :data_source,
     args: [],
     code: fn -> [1, 2, 3, 4, 5] end
   }
 
-  transform = %Handout.Function{
+  transform = %Handoff.Function{
     id: :transform,
     args: [:data_source],
     code: fn %{data_source: data} -> Enum.map(data, &(&1 * 2)) end
   }
 
-  aggregation = %Handout.Function{
+  aggregation = %Handoff.Function{
     id: :aggregate,
     args: [:transform],
     code: fn %{transform: data} -> Enum.sum(data) end
@@ -42,12 +42,12 @@ defmodule Handout.DAG do
   # Build the DAG
   dag =
     dag
-    |> Handout.DAG.add_function(source)
-    |> Handout.DAG.add_function(transform)
-    |> Handout.DAG.add_function(aggregation)
+    |> Handoff.DAG.add_function(source)
+    |> Handoff.DAG.add_function(transform)
+    |> Handoff.DAG.add_function(aggregation)
 
   # Validate the DAG
-  case Handout.DAG.validate(dag) do
+  case Handoff.DAG.validate(dag) do
     :ok ->
       # DAG is valid and ready for execution
       IO.puts("DAG is valid")
@@ -70,7 +70,7 @@ defmodule Handout.DAG do
   A valid DAG is required before execution.
   """
 
-  alias Handout.Function
+  alias Handoff.Function
 
   defstruct functions: %{}, id: nil
 
@@ -82,8 +82,8 @@ defmodule Handout.DAG do
 
   ## Example
 
-      dag_with_specific_id = Handout.DAG.new("some-specific-id")
-      dag_with_generated_id = Handout.DAG.new()
+      dag_with_specific_id = Handoff.DAG.new("some-specific-id")
+      dag_with_generated_id = Handoff.DAG.new()
   """
   def new(id \\ nil) do
     %__MODULE__{id: id || make_ref()}
@@ -94,7 +94,7 @@ defmodule Handout.DAG do
 
   ## Parameters
   - dag: The current DAG structure
-  - function: A Handout.Function struct to add to the DAG
+  - function: A Handoff.Function struct to add to the DAG
 
   ## Returns
   - Updated DAG with the function added
@@ -103,8 +103,8 @@ defmodule Handout.DAG do
 
   ```elixir
   dag =
-    Handout.DAG.new()
-    |> Handout.DAG.add_function(%Handout.Function{
+    Handoff.DAG.new()
+    |> Handoff.DAG.add_function(%Handoff.Function{
       id: :source,
       args: [],
       code: fn -> :rand.uniform(100) end
@@ -125,23 +125,23 @@ defmodule Handout.DAG do
 
   ## Example
 
-      iex> dag = Handout.DAG.new()
-      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [], code: fn -> 1 end})
-      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :b, args: [:a], code: fn %{a: a} -> a + 1 end})
-      iex> Handout.DAG.validate(dag)
+      iex> dag = Handoff.DAG.new()
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [], code: fn -> 1 end})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: fn %{a: a} -> a + 1 end})
+      iex> Handoff.DAG.validate(dag)
       :ok
 
   ## Error cases
 
-      iex> dag = Handout.DAG.new()
-      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [:b], code: fn _ -> 1 end})
-      iex> Handout.DAG.validate(dag)
+      iex> dag = Handoff.DAG.new()
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: fn _ -> 1 end})
+      iex> Handoff.DAG.validate(dag)
       {:error, {:missing_function, :b}}
 
-      iex> dag = Handout.DAG.new()
-      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :a, args: [:b], code: fn %{b: b} -> b end})
-      iex> dag = Handout.DAG.add_function(dag, %Handout.Function{id: :b, args: [:a], code: fn %{a: a} -> a end})
-      iex> {:error, {:cyclic_dependency, cycle}} = Handout.DAG.validate(dag)
+      iex> dag = Handoff.DAG.new()
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: fn %{b: b} -> b end})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: fn %{a: a} -> a end})
+      iex> {:error, {:cyclic_dependency, cycle}} = Handoff.DAG.validate(dag)
       iex> Enum.sort(cycle)
       [:a, :b]
   """

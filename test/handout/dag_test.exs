@@ -1,9 +1,9 @@
-defmodule Handout.DAGTest do
+defmodule Handoff.DAGTest do
   use ExUnit.Case, async: true
 
-  alias Handout.{DAG, Function}
+  alias Handoff.{DAG, Function}
 
-  doctest Handout.DAG
+  doctest Handoff.DAG
 
   describe "new/0" do
     test "creates an empty DAG" do

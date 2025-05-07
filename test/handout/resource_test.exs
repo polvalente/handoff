@@ -1,13 +1,13 @@
-defmodule Handout.ResourceTest do
+defmodule Handoff.ResourceTest do
   use ExUnit.Case, async: false
 
-  alias Handout.Function
-  alias Handout.SimpleResourceTracker
-  alias Handout.SimpleAllocator
+  alias Handoff.Function
+  alias Handoff.SimpleResourceTracker
+  alias Handoff.SimpleAllocator
 
   setup do
     # Get test nodes if available
-    test_nodes = Application.get_env(:handout, :test_nodes, [])
+    test_nodes = Application.get_env(:handoff, :test_nodes, [])
 
     # Register code paths on remote nodes for module visibility
     for node <- test_nodes do

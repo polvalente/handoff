@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for Handout
+about: Suggest an idea for Handoff
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''

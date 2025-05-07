@@ -1,7 +1,7 @@
-defmodule Handout.DistributedResultStoreTest do
+defmodule Handoff.DistributedResultStoreTest do
   use ExUnit.Case, async: false
 
-  alias Handout.{
+  alias Handoff.{
     ResultStore,
     DistributedResultStore,
     DataLocationRegistry
@@ -12,7 +12,7 @@ defmodule Handout.DistributedResultStoreTest do
 
   setup do
     # Get test nodes from application env
-    assert [node2, node3] = Application.get_env(:handout, :test_nodes)
+    assert [node2, node3] = Application.get_env(:handoff, :test_nodes)
 
     # Clear stores for the default DAG ID
     ResultStore.clear(@dag_id_a)

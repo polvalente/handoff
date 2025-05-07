@@ -1,7 +1,7 @@
-defmodule Handout.ResultStoreTest do
+defmodule Handoff.ResultStoreTest do
   use ExUnit.Case, async: false
 
-  alias Handout.{ResultStore, DataLocationRegistry}
+  alias Handoff.{ResultStore, DataLocationRegistry}
 
   @dag_id_a "test_dag_a"
   @dag_id_b "test_dag_b"

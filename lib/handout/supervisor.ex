@@ -1,6 +1,6 @@
-defmodule Handout.Supervisor do
+defmodule Handoff.Supervisor do
   @moduledoc """
-  Main supervisor for the Handout execution engine.
+  Main supervisor for the Handoff execution engine.
 
   Manages the lifecycle of all components needed for DAG execution.
   """
@@ -18,15 +18,15 @@ defmodule Handout.Supervisor do
     setup_telemetry_handlers()
 
     children = [
-      {Handout.ResultStore, []},
-      {Handout.SimpleResourceTracker, []},
-      {Handout.DataLocationRegistry, []},
-      {Handout.Executor, []},
-      {Handout.DistributedExecutor, opts},
-      {Handout.DistributedResultStore, []}
+      {Handoff.ResultStore, []},
+      {Handoff.SimpleResourceTracker, []},
+      {Handoff.DataLocationRegistry, []},
+      {Handoff.Executor, []},
+      {Handoff.DistributedExecutor, opts},
+      {Handoff.DistributedResultStore, []}
     ]
 
-    Logger.info("Starting Handout supervisor",
+    Logger.info("Starting Handoff supervisor",
       distributed: Keyword.get(opts, :distributed, false)
     )
 
@@ -36,11 +36,11 @@ defmodule Handout.Supervisor do
   # Set up telemetry event handlers
   defp setup_telemetry_handlers do
     # Get the telemetry events from config
-    events = Application.get_env(:handout, :telemetry, [])[:events] || []
+    events = Application.get_env(:handoff, :telemetry, [])[:events] || []
 
     # Attach handlers for all events
     :telemetry.attach_many(
-      "handout-logger",
+      "handoff-logger",
       events,
       &handle_telemetry_event/4,
       nil

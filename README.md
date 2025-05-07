@@ -1,6 +1,6 @@
-# Handout
+# Handoff
 
-Handout is a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
+Handoff is a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
 
 ## Features
 
@@ -11,12 +11,12 @@ Handout is a library for building and executing Directed Acyclic Graphs (DAGs) o
 
 ## Installation
 
-The package can be installed by adding `handout` to your list of dependencies in `mix.exs`:
+The package can be installed by adding `handoff` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:handout, "~> 0.1.0"}
+    {:handoff, "~> 0.1.0"}
   ]
 end
 ```
@@ -28,10 +28,10 @@ end
 Here's a simple example of how to create and validate a DAG:
 
 ```elixir
-alias Handout.{DAG, Function}
+alias Handoff.{DAG, Function}
 
 # Create a new empty DAG
-dag = Handout.new()
+dag = Handoff.new()
 
 # Define a source function with no dependencies
 source_fn = %Function{
@@ -93,7 +93,7 @@ Check out the [`livebooks/`](livebooks/) directory for these interactive noteboo
 
 ## Documentation
 
-Documentation will be available at [https://hexdocs.pm/handout](https://hexdocs.pm/handout) once published.
+Documentation will be available at [https://hexdocs.pm/handoff](https://hexdocs.pm/handoff) once published.
 
 ## Contributing
 

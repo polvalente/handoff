@@ -2,19 +2,19 @@
 
 ## Introduction
 
-This example demonstrates using Handout to build a simple data processing pipeline. The pipeline processes random data through a series of transformation steps, showing how to construct and execute a directed acyclic graph (DAG) of operations.
+This example demonstrates using Handoff to build a simple data processing pipeline. The pipeline processes random data through a series of transformation steps, showing how to construct and execute a directed acyclic graph (DAG) of operations.
 
 ## Setup
 
-First, let's make sure the Handout library is available:
+First, let's make sure the Handoff library is available:
 
 ```elixir
-# If you're running this in the Handout project directory:
+# If you're running this in the Handoff project directory:
 Mix.install([]) # No additional dependencies needed
 
 # If you're running this separately, you'd need:
 # Mix.install([
-#   {:handout, git: "https://github.com/your-username/handout.git"}
+#   {:handoff, git: "https://github.com/your-username/handoff.git"}
 # ])
 ```
 
@@ -49,14 +49,14 @@ defmodule Stats do
 end
 ```
 
-## Starting Handout
+## Starting Handoff
 
 ```elixir
-# Start Handout
-{:ok, _pid} = Handout.start()
+# Start Handoff
+{:ok, _pid} = Handoff.start()
 
 # Create a new DAG
-dag = Handout.new()
+dag = Handoff.new()
 ```
 
 ## Building the Pipeline
@@ -64,7 +64,7 @@ dag = Handout.new()
 Let's define each step in our data pipeline:
 
 ```elixir
-alias Handout.Function
+alias Handoff.Function
 
 # Step 1: Generate random data
 generate_fn = %Function{
@@ -150,19 +150,19 @@ format_fn = %Function{
 # Build the DAG
 dag =
   dag
-  |> Handout.DAG.add_function(generate_fn)
-  |> Handout.DAG.add_function(filter_fn)
-  |> Handout.DAG.add_function(transform_fn)
-  |> Handout.DAG.add_function(aggregate_fn)
-  |> Handout.DAG.add_function(format_fn)
+  |> Handoff.DAG.add_function(generate_fn)
+  |> Handoff.DAG.add_function(filter_fn)
+  |> Handoff.DAG.add_function(transform_fn)
+  |> Handoff.DAG.add_function(aggregate_fn)
+  |> Handoff.DAG.add_function(format_fn)
 
 # Validate the DAG
-case Handout.DAG.validate(dag) do
+case Handoff.DAG.validate(dag) do
   :ok ->
     IO.puts("\nExecuting data pipeline...\n")
 
     # Execute the DAG
-    case Handout.execute(dag) do
+    case Handoff.execute(dag) do
       {:ok, results} ->
         # Print the final formatted output
         IO.puts(results[:format_output])
@@ -182,7 +182,7 @@ Try changing the parameters to see how they affect the results:
 
 ```elixir
 # Create a new DAG with different parameters
-modified_dag = Handout.new()
+modified_dag = Handoff.new()
 
 # Use the same functions but modify extra_args
 modified_filter_fn = %{filter_fn | extra_args: [50]} # Higher threshold
@@ -191,15 +191,15 @@ modified_transform_fn = %{transform_fn | extra_args: [:sqrt]} # Different operat
 # Rebuild the DAG
 modified_dag =
   modified_dag
-  |> Handout.DAG.add_function(generate_fn)
-  |> Handout.DAG.add_function(modified_filter_fn)
-  |> Handout.DAG.add_function(modified_transform_fn)
-  |> Handout.DAG.add_function(aggregate_fn)
-  |> Handout.DAG.add_function(format_fn)
+  |> Handoff.DAG.add_function(generate_fn)
+  |> Handoff.DAG.add_function(modified_filter_fn)
+  |> Handoff.DAG.add_function(modified_transform_fn)
+  |> Handoff.DAG.add_function(aggregate_fn)
+  |> Handoff.DAG.add_function(format_fn)
 
 # Execute the modified DAG
-:ok = Handout.DAG.validate(modified_dag)
-{:ok, results} = Handout.execute(dag)
+:ok = Handoff.DAG.validate(modified_dag)
+{:ok, results} = Handoff.execute(dag)
 IO.puts(results[:format_output])
 ```
 

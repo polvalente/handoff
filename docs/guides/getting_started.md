@@ -1,15 +1,15 @@
-# Getting Started with Handout
+# Getting Started with Handoff
 
-This guide will help you get started with Handout, a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
+This guide will help you get started with Handoff, a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
 
 ## Installation
 
-Add `handout` to your list of dependencies in `mix.exs`:
+Add `handoff` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:handout, "~> 0.1.0"}
+    {:handoff, "~> 0.1.0"}
   ]
 end
 ```
@@ -22,16 +22,16 @@ mix deps.get
 
 ## Basic Usage
 
-### Starting Handout
+### Starting Handoff
 
-Before using Handout, you need to start its supervision tree:
+Before using Handoff, you need to start its supervision tree:
 
 ```elixir
-# Start Handout with default options
-Handout.start()
+# Start Handoff with default options
+Handoff.start()
 
 # Or with custom options
-Handout.start(allocation_strategy: :load_balanced)
+Handoff.start(allocation_strategy: :load_balanced)
 ```
 
 ### Creating a Simple DAG
@@ -39,10 +39,10 @@ Handout.start(allocation_strategy: :load_balanced)
 Let's create a simple computation graph:
 
 ```elixir
-alias Handout.Function
+alias Handoff.Function
 
 # Create a new DAG
-dag = Handout.new()
+dag = Handoff.new()
 
 # Define a source function with no dependencies
 source_fn = %Function{
@@ -68,19 +68,19 @@ aggregate_fn = %Function{
 # Add functions to the DAG
 dag =
   dag
-  |> Handout.DAG.add_function(source_fn)
-  |> Handout.DAG.add_function(transform_fn)
-  |> Handout.DAG.add_function(aggregate_fn)
+  |> Handoff.DAG.add_function(source_fn)
+  |> Handoff.DAG.add_function(transform_fn)
+  |> Handoff.DAG.add_function(aggregate_fn)
 
 # Validate the DAG
-:ok = Handout.DAG.validate(dag)
+:ok = Handoff.DAG.validate(dag)
 ```
 
 ### Executing the DAG
 
 ```elixir
 # Execute the DAG
-{:ok, results} = Handout.execute(valid_dag)
+{:ok, results} = Handoff.execute(valid_dag)
 
 # Access the final result
 sum_result = results[:sum]
@@ -105,19 +105,19 @@ parametrized_fn = %Function{
 
 ## Error Handling
 
-Handout provides proper error handling during validation and execution:
+Handoff provides proper error handling during validation and execution:
 
 ```elixir
 # DAG with missing dependencies
 invalid_dag =
-  Handout.new()
-  |> Handout.DAG.add_function(%Function{
+  Handoff.new()
+  |> Handoff.DAG.add_function(%Function{
     id: :invalid,
     args: [:non_existent],  # This dependency doesn't exist
     code: fn _ -> :error end
   })
 
-case Handout.DAG.validate(invalid_dag) do
+case Handoff.DAG.validate(invalid_dag) do
   :ok ->
     IO.puts("DAG is valid")
 
@@ -128,7 +128,7 @@ end
 
 ## Next Steps
 
-Now that you understand the basics of Handout, you might want to explore:
+Now that you understand the basics of Handoff, you might want to explore:
 
 - [Distributed Execution](distributed_execution.md) - Execute your DAGs across multiple nodes
 - [Resource Management](resource_management.md) - Define and manage computational resources

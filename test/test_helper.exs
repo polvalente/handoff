@@ -15,10 +15,10 @@ end
 # Set up code paths and ensure applications are started
 for node <- [node2, node3] do
   true = :erpc.call(node, :code, :set_path, [:code.get_path()])
-  {:ok, _} = :erpc.call(node, :application, :ensure_all_started, [:handout])
+  {:ok, _} = :erpc.call(node, :application, :ensure_all_started, [:handoff])
 end
 
 # Store node names in application environment for tests to use
-Application.put_env(:handout, :test_nodes, [node2, node3])
+Application.put_env(:handoff, :test_nodes, [node2, node3])
 
 ExUnit.start(capture_log: true)

@@ -1,9 +1,9 @@
-defmodule Handout.ConcurrentExecutionTest do
+defmodule Handoff.ConcurrentExecutionTest do
   # async: false for controlled concurrency testing initially
   # Can be async now
   use ExUnit.Case, async: true
 
-  alias Handout.{DAG, Function, Executor, ResultStore, DataLocationRegistry}
+  alias Handoff.{DAG, Function, Executor, ResultStore, DataLocationRegistry}
 
   defp create_simple_dag(dag_id, val_prefix) do
     DAG.new(dag_id)
@@ -19,7 +19,7 @@ defmodule Handout.ConcurrentExecutionTest do
     })
   end
 
-  describe "Concurrent Local DAG Execution (Handout.Executor)" do
+  describe "Concurrent Local DAG Execution (Handoff.Executor)" do
     test "executes two simple DAGs concurrently with data isolation" do
       dag_id_1 = {self(), 1}
       dag_id_2 = {self(), 2}
@@ -63,7 +63,7 @@ defmodule Handout.ConcurrentExecutionTest do
     end
   end
 
-  describe "Concurrent Distributed DAG Execution (Handout.DistributedExecutor)" do
+  describe "Concurrent Distributed DAG Execution (Handoff.DistributedExecutor)" do
     defp create_dist_dag(dag_id, val_prefix, node_to_run_on) do
       DAG.new(dag_id)
       |> DAG.add_function(%Function{
@@ -97,8 +97,8 @@ defmodule Handout.ConcurrentExecutionTest do
       dag_a = create_dist_dag(dag_a_id, "dagA", node_self)
       dag_b = create_dist_dag(dag_b_id, "dagB", node_self)
 
-      task_a = Task.async(fn -> Handout.DistributedExecutor.execute(dag_a, []) end)
-      task_b = Task.async(fn -> Handout.DistributedExecutor.execute(dag_b, []) end)
+      task_a = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_a, []) end)
+      task_b = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_b, []) end)
 
       res_a = Task.await(task_a, 15000)
       res_b = Task.await(task_b, 15000)
@@ -129,7 +129,7 @@ defmodule Handout.ConcurrentExecutionTest do
   end
 
   describe "API Error Handling with DAG IDs" do
-    test "Handout.get_result returns :not_found for non-existent dag_id or item_id" do
+    test "Handoff.get_result returns :not_found for non-existent dag_id or item_id" do
       # Use test PID
       dag_id_exists = {self(), 1}
       item_id_exists_for_dag = :item_for_error_test
@@ -142,16 +142,16 @@ defmodule Handout.ConcurrentExecutionTest do
 
       # Try to get result with a completely non-existent DAG ID
       assert {:error, :timeout} =
-               Handout.get_result(non_existent_dag_id, :any_item, 50)
+               Handoff.get_result(non_existent_dag_id, :any_item, 50)
 
       # (get_result uses get_with_timeout which tries to fetch, so :timeout is expected if not found after trying)
 
       # Try to get a non-existent item from an existing DAG ID
       assert {:error, :timeout} =
-               Handout.get_result(dag_id_exists, :non_existent_item_for_error, 50)
+               Handoff.get_result(dag_id_exists, :non_existent_item_for_error, 50)
 
       # Try to get an existing item from an existing DAG ID (should succeed)
-      assert {:ok, "some_value"} = Handout.get_result(dag_id_exists, item_id_exists_for_dag, 50)
+      assert {:ok, "some_value"} = Handoff.get_result(dag_id_exists, item_id_exists_for_dag, 50)
     end
   end
 end

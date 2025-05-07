@@ -1,6 +1,6 @@
 # Issue Triage and Workflow Guide
 
-This document outlines the conventions and processes for managing issues and pull requests in the Handout project.
+This document outlines the conventions and processes for managing issues and pull requests in the Handoff project.
 
 ## Issue Labels
 

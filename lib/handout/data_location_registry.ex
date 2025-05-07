@@ -1,4 +1,4 @@
-defmodule Handout.DataLocationRegistry do
+defmodule Handoff.DataLocationRegistry do
   @moduledoc """
   Tracks the location (node ID) of every piece of data (argument or intermediate result) for each DAG.
 

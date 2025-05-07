@@ -1,4 +1,4 @@
-defmodule Handout.ResultStore do
+defmodule Handoff.ResultStore do
   @moduledoc """
   Provides storage and retrieval of function execution results and cached arguments.
 
@@ -85,7 +85,7 @@ defmodule Handout.ResultStore do
       if from_node do
         from_node
       else
-        case Handout.DataLocationRegistry.lookup(dag_id, id) do
+        case Handoff.DataLocationRegistry.lookup(dag_id, id) do
           {:ok, node_id} -> node_id
           {:error, :not_found} -> nil
         end
@@ -145,7 +145,7 @@ defmodule Handout.ResultStore do
   @impl true
   def init(_) do
     Logger.info("ResultStore init: #{inspect({self(), Node.self()})}")
-    table = :ets.new(:handout_results, [:set, :private, :named_table, read_concurrency: true])
+    table = :ets.new(:handoff_results, [:set, :private, :named_table, read_concurrency: true])
     {:ok, %{table: table}}
   end
 

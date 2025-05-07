@@ -1,4 +1,4 @@
-defmodule Handout.SimpleAllocator do
+defmodule Handoff.SimpleAllocator do
   @moduledoc """
   A simple implementation of the Allocator behavior that provides
   basic allocation strategies for distributing functions across nodes.
@@ -8,10 +8,10 @@ defmodule Handout.SimpleAllocator do
   - load_balanced: distributes functions across nodes to balance load
   """
 
-  @behaviour Handout.Allocator
+  @behaviour Handoff.Allocator
 
-  alias Handout.Function
-  alias Handout.SimpleResourceTracker
+  alias Handoff.Function
+  alias Handoff.SimpleResourceTracker
 
   @doc """
   Allocate functions to nodes based on resource requirements and node capabilities.
@@ -24,7 +24,7 @@ defmodule Handout.SimpleAllocator do
   ## Returns
   A map with function IDs as keys and node assignments as values.
   """
-  @impl Handout.Allocator
+  @impl Handoff.Allocator
   def allocate(functions, caps) do
     allocate(functions, caps, :first_available)
   end

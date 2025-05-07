@@ -1,10 +1,10 @@
 # Resource Management
 
-This guide explains how to define, track, and allocate computational resources with Handout.
+This guide explains how to define, track, and allocate computational resources with Handoff.
 
 ## Resource Types
 
-Handout allows you to define any type of computational resource. Common resource types include:
+Handoff allows you to define any type of computational resource. Common resource types include:
 
 - `cpu` - CPU cores or processing units
 - `memory` - Memory in MB
@@ -16,7 +16,7 @@ Handout allows you to define any type of computational resource. Common resource
 Resource requirements are defined at the function level using the `:cost` field:
 
 ```elixir
-alias Handout.Function
+alias Handoff.Function
 
 # Function requiring 2 CPU cores and 4GB memory
 cpu_function = %Function{
@@ -45,11 +45,11 @@ custom_function = %Function{
 
 ## Node Capabilities
 
-Each node in a Handout cluster advertises its available resources:
+Each node in a Handoff cluster advertises its available resources:
 
 ```elixir
 # Register node capabilities
-Handout.register_node(Node.self(), %{
+Handoff.register_node(Node.self(), %{
   cpu: 8,          # 8 CPU cores
   memory: 16000,   # 16GB memory
   gpu: 2,          # 2 GPU units
@@ -59,11 +59,11 @@ Handout.register_node(Node.self(), %{
 
 ## Resource Tracking
 
-Handout's resource trackers monitor resource availability across nodes:
+Handoff's resource trackers monitor resource availability across nodes:
 
 ```elixir
 # Check if a node has sufficient resources
-has_resources = Handout.resources_available?(
+has_resources = Handoff.resources_available?(
   :"node1@example.com",
   %{cpu: 4, memory: 8000}
 )
@@ -77,17 +77,17 @@ end
 
 ### Built-in Resource Trackers
 
-Handout provides one built-in resource tracker:
+Handoff provides one built-in resource tracker:
 
-1. `Handout.SimpleResourceTracker`: Basic static resource tracking
+1. `Handoff.SimpleResourceTracker`: Basic static resource tracking
 
 ## Custom Resource Trackers
 
-You can implement custom resource tracking by implementing the `Handout.ResourceTracker` behavior:
+You can implement custom resource tracking by implementing the `Handoff.ResourceTracker` behavior:
 
 ```elixir
 defmodule MyApp.CustomResourceTracker do
-  @behaviour Handout.ResourceTracker
+  @behaviour Handoff.ResourceTracker
 
   @impl true
   def register(node, caps) do
@@ -111,27 +111,27 @@ end
 
 ## Allocation Strategies
 
-Handout's allocators decide which node should execute each function based on resource availability:
+Handoff's allocators decide which node should execute each function based on resource availability:
 
 ### Built-in Allocators
 
-1. `Handout.SimpleAllocator`: Uses first-available or load-balanced strategies
-2. `Handout.CostOptimizedAllocator`: Optimizes allocation to minimize overall resource usage
+1. `Handoff.SimpleAllocator`: Uses first-available or load-balanced strategies
+2. `Handoff.CostOptimizedAllocator`: Optimizes allocation to minimize overall resource usage
 
 ```elixir
 # Execute with the cost-optimized allocator
-{:ok, results} = Handout.execute_distributed(dag,
+{:ok, results} = Handoff.execute_distributed(dag,
   allocation_strategy: :cost_optimized
 )
 ```
 
 ### Custom Allocators
 
-You can implement custom allocation strategies by implementing the `Handout.Allocator` behavior:
+You can implement custom allocation strategies by implementing the `Handoff.Allocator` behavior:
 
 ```elixir
 defmodule MyApp.CustomAllocator do
-  @behaviour Handout.Allocator
+  @behaviour Handoff.Allocator
 
   @impl true
   def allocate(functions, capabilities) do
@@ -142,18 +142,18 @@ defmodule MyApp.CustomAllocator do
 end
 
 # Use the custom allocator
-Handout.start(allocator: MyApp.CustomAllocator)
+Handoff.start(allocator: MyApp.CustomAllocator)
 ```
 
 ## Resource Monitoring
 
-Handout provides telemetry events for monitoring resource usage:
+Handoff provides telemetry events for monitoring resource usage:
 
 ```elixir
 # Attach to resource allocation events
 :telemetry.attach(
   "resource-monitoring",
-  [:handout, :resource, :allocation],
+  [:handoff, :resource, :allocation],
   fn _name, measurements, metadata, _config ->
     function_id = metadata.function_id
     node = metadata.node
@@ -167,11 +167,11 @@ Handout provides telemetry events for monitoring resource usage:
 
 ## Resource Visualization
 
-Handout's visualization tools can help you understand resource usage:
+Handoff's visualization tools can help you understand resource usage:
 
 ```elixir
 # Generate resource utilization visualization data
-{:ok, utilization_data} = Handout.Visualization.resource_utilization(results)
+{:ok, utilization_data} = Handoff.Visualization.resource_utilization(results)
 ```
 
 ## Best Practices

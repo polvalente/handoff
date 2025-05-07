@@ -1,4 +1,4 @@
-defmodule Handout.DistributedResultStore do
+defmodule Handoff.DistributedResultStore do
   @moduledoc """
   Provides synchronized storage and retrieval of function execution results across cluster nodes.
 
@@ -7,7 +7,7 @@ defmodule Handout.DistributedResultStore do
 
   use GenServer
   require Logger
-  alias Handout.{ResultStore, DataLocationRegistry}
+  alias Handoff.{ResultStore, DataLocationRegistry}
 
   # Client API
 

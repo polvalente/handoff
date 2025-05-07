@@ -1,6 +1,6 @@
-defmodule Handout.Telemetry do
+defmodule Handoff.Telemetry do
   @moduledoc """
-  Defines telemetry events and helpers for the Handout library.
+  Defines telemetry events and helpers for the Handoff library.
 
   This module contains:
   1. Constants for all telemetry event names
@@ -9,10 +9,10 @@ defmodule Handout.Telemetry do
 
   ## Event Naming Convention
 
-  All Handout events use the prefix `[:handout]` followed by component and action:
-  - `[:handout, :executor, :function, :start]` - When a function execution starts
-  - `[:handout, :executor, :function, :stop]` - When a function execution completes
-  - `[:handout, :executor, :function, :exception]` - When a function execution fails
+  All Handoff events use the prefix `[:handoff]` followed by component and action:
+  - `[:handoff, :executor, :function, :start]` - When a function execution starts
+  - `[:handoff, :executor, :function, :stop]` - When a function execution completes
+  - `[:handoff, :executor, :function, :exception]` - When a function execution fails
 
   ## Common Measurements and Metadata
 
@@ -27,7 +27,7 @@ defmodule Handout.Telemetry do
   ```elixir
   :telemetry.attach(
     "my-handler-id",
-    [:handout, :executor, :function, :stop],
+    [:handoff, :executor, :function, :stop],
     fn event_name, measurements, metadata, config ->
       # Process the event
     end,
@@ -38,26 +38,26 @@ defmodule Handout.Telemetry do
 
   # Event name constants
   # Executor events
-  @executor_function_start [:handout, :executor, :function, :start]
-  @executor_function_stop [:handout, :executor, :function, :stop]
-  @executor_function_exception [:handout, :executor, :function, :exception]
+  @executor_function_start [:handoff, :executor, :function, :start]
+  @executor_function_stop [:handoff, :executor, :function, :stop]
+  @executor_function_exception [:handoff, :executor, :function, :exception]
 
   # DAG events
-  @dag_execution_start [:handout, :dag, :execution, :start]
-  @dag_execution_stop [:handout, :dag, :execution, :stop]
-  @dag_execution_exception [:handout, :dag, :execution, :exception]
+  @dag_execution_start [:handoff, :dag, :execution, :start]
+  @dag_execution_stop [:handoff, :dag, :execution, :stop]
+  @dag_execution_exception [:handoff, :dag, :execution, :exception]
 
   # Resource tracker events
-  @resource_request [:handout, :resource_tracker, :request]
-  @resource_allocation [:handout, :resource_tracker, :allocation]
-  @resource_release [:handout, :resource_tracker, :release]
+  @resource_request [:handoff, :resource_tracker, :request]
+  @resource_allocation [:handoff, :resource_tracker, :allocation]
+  @resource_release [:handoff, :resource_tracker, :release]
 
   # Allocator events
-  @allocator_allocation_start [:handout, :allocator, :allocation, :start]
-  @allocator_allocation_stop [:handout, :allocator, :allocation, :stop]
+  @allocator_allocation_start [:handoff, :allocator, :allocation, :start]
+  @allocator_allocation_stop [:handoff, :allocator, :allocation, :stop]
 
   # Event name getters
-  def event_prefix, do: [:handout]
+  def event_prefix, do: [:handoff]
 
   # Executor events
   def executor_function_start, do: @executor_function_start

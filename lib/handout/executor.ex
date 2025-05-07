@@ -1,4 +1,4 @@
-defmodule Handout.Executor do
+defmodule Handoff.Executor do
   @moduledoc """
   Executes DAG functions in dependency order.
 
@@ -6,7 +6,7 @@ defmodule Handout.Executor do
   """
 
   use GenServer
-  alias Handout.{DAG, ResultStore, SimpleAllocator, SimpleResourceTracker}
+  alias Handoff.{DAG, ResultStore, SimpleAllocator, SimpleResourceTracker}
 
   # Client API
 

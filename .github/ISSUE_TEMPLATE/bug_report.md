@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve Handout
+about: Create a report to help us improve Handoff
 title: '[BUG] '
 labels: bug
 assignees: ''
@@ -30,7 +30,7 @@ Paste any error messages or stack traces here
 
 ## Environment
 
-- Handout version: [e.g. 0.1.0]
+- Handoff version: [e.g. 0.1.0]
 - Elixir version: [e.g. 1.18.0]
 - Erlang/OTP version: [e.g. 25.3]
 - Operating system: [e.g. Ubuntu 22.04]

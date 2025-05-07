@@ -1,9 +1,9 @@
-defmodule Handout.MixProject do
+defmodule Handoff.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :handout,
+      app: :handoff,
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -20,7 +20,7 @@ defmodule Handout.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {Handout.Application, []}
+      mod: {Handoff.Application, []}
     ]
   end
 

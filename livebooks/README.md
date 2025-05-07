@@ -1,10 +1,10 @@
-# Handout Livebook Examples
+# Handoff Livebook Examples
 
-This directory contains interactive Livebook examples for the Handout library. These examples demonstrate how to build and execute directed acyclic graphs (DAGs) of operations in various scenarios.
+This directory contains interactive Livebook examples for the Handoff library. These examples demonstrate how to build and execute directed acyclic graphs (DAGs) of operations in various scenarios.
 
 ## Available Examples
 
-1. **Simple Pipeline** (`simple_pipeline.livemd`) - A basic example showing how to create a data processing pipeline with Handout.
+1. **Simple Pipeline** (`simple_pipeline.livemd`) - A basic example showing how to create a data processing pipeline with Handoff.
 2. **Distributed Image Processing** (`distributed_image_processing.livemd`) - A more complex example demonstrating distributed processing across multiple nodes with resource requirements.
 
 ## Running the Examples
@@ -25,7 +25,7 @@ Once Livebook is running, you can import and run these `.livemd` files.
 
 ## Key Features Demonstrated
 
-These examples showcase several key features of the Handout library:
+These examples showcase several key features of the Handoff library:
 
 - Building DAGs with dependencies between operations
 - Executing DAGs in single-node and distributed environments

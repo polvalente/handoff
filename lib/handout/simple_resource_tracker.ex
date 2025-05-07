@@ -1,15 +1,15 @@
-defmodule Handout.SimpleResourceTracker do
+defmodule Handoff.SimpleResourceTracker do
   @moduledoc """
   A simple implementation of the ResourceTracker behavior that tracks
   resources using an ETS table.
   """
 
-  @behaviour Handout.ResourceTracker
+  @behaviour Handoff.ResourceTracker
 
   use GenServer
   require Logger
 
-  @table_name :handout_resources
+  @table_name :handoff_resources
 
   # Client API
 
@@ -17,22 +17,22 @@ defmodule Handout.SimpleResourceTracker do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @impl Handout.ResourceTracker
+  @impl Handoff.ResourceTracker
   def register(node, caps) do
     GenServer.call(__MODULE__, {:register, node, caps})
   end
 
-  @impl Handout.ResourceTracker
+  @impl Handoff.ResourceTracker
   def available?(node, req) do
     GenServer.call(__MODULE__, {:available?, node, req})
   end
 
-  @impl Handout.ResourceTracker
+  @impl Handoff.ResourceTracker
   def request(node, req) do
     GenServer.call(__MODULE__, {:request, node, req})
   end
 
-  @impl Handout.ResourceTracker
+  @impl Handoff.ResourceTracker
   def release(node, req) do
     GenServer.call(__MODULE__, {:release, node, req})
   end

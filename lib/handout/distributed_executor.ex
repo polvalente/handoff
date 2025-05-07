@@ -1,4 +1,4 @@
-defmodule Handout.DistributedExecutor do
+defmodule Handoff.DistributedExecutor do
   @moduledoc """
   Handles the distributed execution of functions across multiple nodes.
 
@@ -7,7 +7,7 @@ defmodule Handout.DistributedExecutor do
 
   use GenServer
   require Logger
-  alias Handout.{DAG, ResultStore, SimpleResourceTracker, DataLocationRegistry}
+  alias Handoff.{DAG, ResultStore, SimpleResourceTracker, DataLocationRegistry}
 
   # Client API
 
@@ -82,7 +82,7 @@ defmodule Handout.DistributedExecutor do
     discovered =
       [Node.self() | Node.list()]
       |> Enum.reduce(%{}, fn node, acc ->
-        case :rpc.call(node, Handout.SimpleResourceTracker, :get_capabilities, []) do
+        case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
           {:badrpc, reason} ->
             Logger.warning(
               "Failed to discover capabilities for node #{inspect(node)}: #{inspect(reason)}"
@@ -218,7 +218,7 @@ defmodule Handout.DistributedExecutor do
     # Get node capabilities from the tracker
     node_caps =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
-        case :rpc.call(node, Handout.SimpleResourceTracker, :get_capabilities, []) do
+        case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
           {:badrpc, _} -> acc
           caps when is_map(caps) -> Map.put(acc, node, caps)
         end
@@ -318,7 +318,7 @@ defmodule Handout.DistributedExecutor do
               {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
                 # For remote execution, the result is not returned directly.
                 # We mark it as executed by adding its ID with a placeholder or status.
-                # The actual result can be fetched via Handout.get_result if needed later.
+                # The actual result can be fetched via Handoff.get_result if needed later.
                 executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
                 to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
                 {pending_acc, to_be_executed_acc, executed_acc}
@@ -429,7 +429,7 @@ defmodule Handout.DistributedExecutor do
               {:ok, result}
             else
               # For remote node execution - the orchestrator is this node (self)
-              case :rpc.call(function.node, Handout.RemoteExecutionWrapper, :execute_and_store, [
+              case :rpc.call(function.node, Handoff.RemoteExecutionWrapper, :execute_and_store, [
                      dag_id,
                      function,
                      args,
@@ -529,7 +529,7 @@ defmodule Handout.DistributedExecutor do
         # Local execution (no cost or no specific node)
         if function.node && function.node != Node.self() do
           # Remote execution without cost - the orchestrator is this node (self)
-          case :rpc.call(function.node, Handout.RemoteExecutionWrapper, :execute_and_store, [
+          case :rpc.call(function.node, Handoff.RemoteExecutionWrapper, :execute_and_store, [
                  dag_id,
                  function,
                  args,
@@ -596,7 +596,7 @@ defmodule Handout.DistributedExecutor do
     functions = Map.values(dag.functions)
 
     # Use SimpleAllocator to get node assignments
-    Handout.SimpleAllocator.allocate(functions, node_caps, allocation_strategy)
+    Handoff.SimpleAllocator.allocate(functions, node_caps, allocation_strategy)
   end
 
   # Assign nodes to functions based on allocation result

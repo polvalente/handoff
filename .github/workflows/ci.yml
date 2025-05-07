@@ -1,4 +1,4 @@
-name: Handout CI
+name: Handoff CI
 
 on:
   push:

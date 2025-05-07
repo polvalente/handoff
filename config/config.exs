@@ -16,19 +16,19 @@ config :logger, :console,
 config :logger, level: :info, truncate: :infinity
 
 # Use Telemetry for metrics
-config :handout, :telemetry,
+config :handoff, :telemetry,
   events: [
-    [:handout, :executor, :function, :start],
-    [:handout, :executor, :function, :stop],
-    [:handout, :executor, :function, :exception],
-    [:handout, :dag, :execution, :start],
-    [:handout, :dag, :execution, :stop],
-    [:handout, :dag, :execution, :exception],
-    [:handout, :resource_tracker, :request],
-    [:handout, :resource_tracker, :allocation],
-    [:handout, :resource_tracker, :release],
-    [:handout, :allocator, :allocation, :start],
-    [:handout, :allocator, :allocation, :stop]
+    [:handoff, :executor, :function, :start],
+    [:handoff, :executor, :function, :stop],
+    [:handoff, :executor, :function, :exception],
+    [:handoff, :dag, :execution, :start],
+    [:handoff, :dag, :execution, :stop],
+    [:handoff, :dag, :execution, :exception],
+    [:handoff, :resource_tracker, :request],
+    [:handoff, :resource_tracker, :allocation],
+    [:handoff, :resource_tracker, :release],
+    [:handoff, :allocator, :allocation, :start],
+    [:handoff, :allocator, :allocation, :stop]
   ]
 
 # Import environment specific config

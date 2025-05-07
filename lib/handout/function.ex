@@ -1,10 +1,10 @@
-defmodule Handout.Function do
+defmodule Handoff.Function do
   @moduledoc """
   Represents a function in a computation graph.
 
   ## Structure
 
-  Each function in a Handout DAG has these key components:
+  Each function in a Handoff DAG has these key components:
 
   * `:id` - A unique identifier for the function (any term, typically an atom)
   * `:args` - A list of other function IDs whose results this function depends on
@@ -18,21 +18,21 @@ defmodule Handout.Function do
 
   ```elixir
   # A simple computation function with no dependencies
-  %Handout.Function{
+  %Handoff.Function{
     id: :generate_data,
     args: [],
     code: fn -> Enum.random(1..100) end
   }
 
   # A function that depends on another function's result
-  %Handout.Function{
+  %Handoff.Function{
     id: :process_data,
     args: [:generate_data],
     code: fn %{generate_data: value} -> value * 2 end
   }
 
   # A function with resource requirements for distributed execution
-  %Handout.Function{
+  %Handoff.Function{
     id: :heavy_computation,
     args: [:process_data],
     code: fn %{process_data: value} -> complex_algorithm(value) end,

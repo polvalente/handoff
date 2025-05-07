@@ -1,4 +1,4 @@
-defmodule Handout.Allocator do
+defmodule Handoff.Allocator do
   @moduledoc """
   Behavior for allocating functions to nodes based on resource requirements.
 
@@ -17,7 +17,7 @@ defmodule Handout.Allocator do
   A map with function IDs as keys and node assignments as values.
   """
   @callback allocate(
-              functions :: [Handout.Function.t()],
+              functions :: [Handoff.Function.t()],
               caps :: %{node() => map()}
             ) :: %{term() => node()}
 end

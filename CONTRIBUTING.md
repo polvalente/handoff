@@ -1,6 +1,6 @@
-# Contributing to Handout
+# Contributing to Handoff
 
-Thank you for your interest in contributing to Handout! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Handoff! This document provides guidelines and instructions for contributing to the project.
 
 ## Code of Conduct
 
@@ -20,8 +20,8 @@ Please note that this project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md)
 2. Clone your fork:
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/handout.git
-   cd handout
+   git clone https://github.com/YOUR_USERNAME/handoff.git
+   cd handoff
    ```
 
 3. Install dependencies:
@@ -59,10 +59,10 @@ Please note that this project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md)
 ## Project Structure
 
 ```
-handout/
+handoff/
 ├── lib/                  # Source code
-│   ├── handout.ex        # Main module and public API
-│   └── handout/          # Implementation modules
+│   ├── handoff.ex        # Main module and public API
+│   └── handoff/          # Implementation modules
 │       ├── dag.ex        # DAG construction and validation
 │       ├── function.ex   # Function struct definition
 │       ├── executor.ex   # Execution engine
@@ -116,7 +116,7 @@ Use the following format for PR titles:
 
 ## Versioning
 
-Handout follows [Semantic Versioning](https://semver.org/):
+Handoff follows [Semantic Versioning](https://semver.org/):
 
 - MAJOR version for incompatible API changes
 - MINOR version for backward-compatible functionality
@@ -157,7 +157,7 @@ Node.connect(:"node3@127.0.0.1")
 ## Additional Resources
 
 - [Elixir Documentation](https://elixir-lang.org/docs.html)
-- [Hex Docs for Handout](https://hexdocs.pm/handout) (when published)
+- [Hex Docs for Handoff](https://hexdocs.pm/handoff) (when published)
 - [Project Roadmap](ROADMAP.md)
 
 ## Getting Help
@@ -170,4 +170,4 @@ If you have questions or need help, please:
 
 ## License
 
-By contributing to Handout, you agree that your contributions will be licensed under the project's [MIT License](LICENSE).
+By contributing to Handoff, you agree that your contributions will be licensed under the project's [MIT License](LICENSE).

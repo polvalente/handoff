@@ -1,4 +1,4 @@
-defmodule Handout.DistributedTestFunctions do
+defmodule Handoff.DistributedTestFunctions do
   @moduledoc """
   Helper functions for distributed tests that can be safely sent between nodes.
   Each function returns a list containing its arguments, making it easy to verify

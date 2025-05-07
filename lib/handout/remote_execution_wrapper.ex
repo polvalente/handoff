@@ -1,10 +1,10 @@
-defmodule Handout.RemoteExecutionWrapper do
+defmodule Handoff.RemoteExecutionWrapper do
   @moduledoc """
   Handles the execution of a function on a remote node,
   storing its result locally, and confirming back to the orchestrator.
   """
 
-  alias Handout.{ResultStore, DataLocationRegistry}
+  alias Handoff.{ResultStore, DataLocationRegistry}
   require Logger
 
   @doc """

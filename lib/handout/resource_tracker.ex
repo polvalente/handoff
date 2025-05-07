@@ -1,4 +1,4 @@
-defmodule Handout.ResourceTracker do
+defmodule Handoff.ResourceTracker do
   @moduledoc """
   Behavior for tracking and managing resources across nodes in the cluster.
 

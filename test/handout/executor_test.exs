@@ -1,13 +1,13 @@
-defmodule Handout.ExecutorTest do
+defmodule Handoff.ExecutorTest do
   use ExUnit.Case, async: true
-  alias Handout.{Function, DAG, Executor, ResultStore}
+  alias Handoff.{Function, DAG, Executor, ResultStore}
 
   describe "single-node execution" do
     test "executes a simple DAG in dependency order" do
       # Create a simple DAG: A -> B -> C
       # Where A = 1, B = A + 1, C = B * 2
 
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       dag_with_functions =
         dag
@@ -45,7 +45,7 @@ defmodule Handout.ExecutorTest do
       # Create a diamond DAG: A -> B -> D
       #                       \-> C -/
 
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       dag_with_functions =
         dag
@@ -81,7 +81,7 @@ defmodule Handout.ExecutorTest do
     end
 
     test "handles a DAG with extra_args" do
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       dag_with_functions =
         dag
@@ -106,7 +106,7 @@ defmodule Handout.ExecutorTest do
     end
 
     test "handles execution errors" do
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       dag_with_functions =
         dag
@@ -127,7 +127,7 @@ defmodule Handout.ExecutorTest do
 
     test "rejects invalid DAGs" do
       # Create a cyclic DAG: A -> B -> A
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       dag_with_functions =
         dag
@@ -148,7 +148,7 @@ defmodule Handout.ExecutorTest do
 
     @tag :skip
     test "can fetch a single element from an argument" do
-      dag = Handout.DAG.new()
+      dag = Handoff.DAG.new()
 
       execute_result =
         dag
@@ -162,7 +162,7 @@ defmodule Handout.ExecutorTest do
           end,
           extra_args: [offset: 10]
         })
-        |> Handout.execute()
+        |> Handoff.execute()
 
       assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} = execute_result
       assert returned_dag_id == dag.id
