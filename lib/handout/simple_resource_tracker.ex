@@ -7,6 +7,7 @@ defmodule Handoff.SimpleResourceTracker do
   @behaviour Handoff.ResourceTracker
 
   use GenServer
+
   require Logger
 
   @table_name :handoff_resources

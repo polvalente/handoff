@@ -1,12 +1,10 @@
 defmodule Handoff.DistributedExecutorTest do
   use ExUnit.Case, async: true
 
-  alias Handoff.{
-    DAG,
-    Function,
-    DistributedExecutor,
-    SimpleResourceTracker
-  }
+  alias Handoff.DAG
+  alias Handoff.DistributedExecutor
+  alias Handoff.Function
+  alias Handoff.SimpleResourceTracker
 
   setup do
     # Register local node with some capabilities
@@ -169,7 +167,8 @@ defmodule Handoff.DistributedExecutorTest do
 
       # Define functions that require more resources than available
       dag_fail =
-        DAG.new(dag1_id)
+        dag1_id
+        |> DAG.new()
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],
@@ -194,7 +193,8 @@ defmodule Handoff.DistributedExecutorTest do
 
       # But a DAG with only the small resource function should succeed
       small_dag =
-        DAG.new(dag2_id)
+        dag2_id
+        |> DAG.new()
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],

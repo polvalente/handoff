@@ -91,9 +91,7 @@ defmodule Handoff.SimpleAllocator do
 
                   # Return value for Enum.find_value
                   {new_assignments, new_available_resources}
-                else
                   # Node cannot satisfy, continue search
-                  nil
                 end
               end)
 
@@ -162,7 +160,8 @@ defmodule Handoff.SimpleAllocator do
             Enum.map(nodes, fn node -> {node, Map.get(loads, node, 0)} end)
           else
             # Filter nodes that have available resources
-            Enum.filter(nodes, fn node ->
+            nodes
+            |> Enum.filter(fn node ->
               SimpleResourceTracker.available?(node, cost)
             end)
             |> Enum.map(fn node -> {node, Map.get(loads, node, 0)} end)

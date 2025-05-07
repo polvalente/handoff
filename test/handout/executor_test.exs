@@ -1,6 +1,10 @@
 defmodule Handoff.ExecutorTest do
   use ExUnit.Case, async: true
-  alias Handoff.{Function, DAG, Executor, ResultStore}
+
+  alias Handoff.DAG
+  alias Handoff.Executor
+  alias Handoff.Function
+  alias Handoff.ResultStore
 
   describe "single-node execution" do
     test "executes a simple DAG in dependency order" do

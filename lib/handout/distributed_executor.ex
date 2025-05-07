@@ -6,8 +6,13 @@ defmodule Handoff.DistributedExecutor do
   """
 
   use GenServer
+
+  alias Handoff.DAG
+  alias Handoff.DataLocationRegistry
+  alias Handoff.ResultStore
+  alias Handoff.SimpleResourceTracker
+
   require Logger
-  alias Handoff.{DAG, ResultStore, SimpleResourceTracker, DataLocationRegistry}
 
   # Client API
 
@@ -80,8 +85,7 @@ defmodule Handoff.DistributedExecutor do
   def handle_call(:discover_nodes, _from, state) do
     # Get all connected nodes and query their capabilities
     discovered =
-      [Node.self() | Node.list()]
-      |> Enum.reduce(%{}, fn node, acc ->
+      Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
         case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
           {:badrpc, reason} ->
             Logger.warning(
@@ -132,10 +136,9 @@ defmodule Handoff.DistributedExecutor do
         :ok
       else
         # Register each initial argument as available on the local node for this DAG
-        function.args
-        |> Enum.each(fn arg_id ->
+        Enum.each(function.args, fn arg_id ->
           # Only register if it's a literal value, not a function ID
-          unless Map.has_key?(dag.functions, arg_id) do
+          if !Map.has_key?(dag.functions, arg_id) do
             DataLocationRegistry.register(dag.id, arg_id, Node.self())
           end
         end)
@@ -503,10 +506,8 @@ defmodule Handoff.DistributedExecutor do
 
                 execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
               else
-                raise %RuntimeError{
-                  message:
-                    "Failed to process function #{function.id} after #{max_retries + 1} attempts (orchestrator/local error): #{inspect(e)}"
-                }
+                reraise "Failed to process function #{function.id} after #{max_retries + 1} attempts (orchestrator/local error): #{inspect(e)}",
+                        __STACKTRACE__
               end
           end
 
@@ -581,10 +582,11 @@ defmodule Handoff.DistributedExecutor do
 
             execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
           else
-            raise %RuntimeError{
-              message:
-                "Failed to execute function #{function.id} (no cost, local) after #{max_retries + 1} attempts: #{inspect(e)}"
-            }
+            reraise %RuntimeError{
+                      message:
+                        "Failed to execute function #{function.id} (no cost, local) after #{max_retries + 1} attempts: #{inspect(e)}"
+                    },
+                    __STACKTRACE__
           end
       end
     end
@@ -626,25 +628,23 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp visit(dag, id, sorted, visited) do
-    cond do
-      MapSet.member?(visited, id) ->
-        {sorted, visited}
+    if MapSet.member?(visited, id) do
+      {sorted, visited}
+    else
+      visited = MapSet.put(visited, id)
 
-      true ->
-        visited = MapSet.put(visited, id)
+      function = Map.get(dag.functions, id)
 
-        function = Map.get(dag.functions, id)
+      {sorted, visited} =
+        Enum.reduce(
+          function.args,
+          {sorted, visited},
+          fn dep_id, {sorted_acc, visited_acc} ->
+            visit(dag, dep_id, sorted_acc, visited_acc)
+          end
+        )
 
-        {sorted, visited} =
-          Enum.reduce(
-            function.args,
-            {sorted, visited},
-            fn dep_id, {sorted_acc, visited_acc} ->
-              visit(dag, dep_id, sorted_acc, visited_acc)
-            end
-          )
-
-        {[id | sorted], visited}
+      {[id | sorted], visited}
     end
   end
 

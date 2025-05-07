@@ -4,7 +4,9 @@ defmodule Handoff.RemoteExecutionWrapper do
   storing its result locally, and confirming back to the orchestrator.
   """
 
-  alias Handoff.{ResultStore, DataLocationRegistry}
+  alias Handoff.DataLocationRegistry
+  alias Handoff.ResultStore
+
   require Logger
 
   @doc """
@@ -19,7 +21,7 @@ defmodule Handoff.RemoteExecutionWrapper do
     # This ensures we know which node is coordinating the DAG execution
     orchestrator = orchestrator_node || Node.self()
 
-    unless Node.self() == function_struct.node do
+    if Node.self() != function_struct.node do
       Logger.warning(
         "RemoteExecutionWrapper executed on #{inspect(Node.self())} for function targeted at #{inspect(function_struct.node)}. This might indicate a misconfiguration or incorrect RPC target."
       )

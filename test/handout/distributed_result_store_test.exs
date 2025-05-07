@@ -1,11 +1,9 @@
 defmodule Handoff.DistributedResultStoreTest do
   use ExUnit.Case, async: false
 
-  alias Handoff.{
-    ResultStore,
-    DistributedResultStore,
-    DataLocationRegistry
-  }
+  alias Handoff.DataLocationRegistry
+  alias Handoff.DistributedResultStore
+  alias Handoff.ResultStore
 
   @dag_id_a "test_dag_a"
   @dag_id_b "test_dag_b"

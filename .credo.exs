@@ -67,7 +67,6 @@
         {Credo.Check.Consistency.SpaceAroundOperators, []},
         {Credo.Check.Consistency.SpaceInParentheses, []},
         {Credo.Check.Consistency.TabsOrSpaces, []},
-        {Credo.Check.Consistency.UnusedVariableNames, []},
 
         # Design checks
         {Credo.Check.Design.AliasUsage, [priority: :low, if_nested_deeper_than: 2, if_called_more_than: 1]},

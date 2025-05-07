@@ -3,10 +3,15 @@ defmodule Handoff.ConcurrentExecutionTest do
   # Can be async now
   use ExUnit.Case, async: true
 
-  alias Handoff.{DAG, Function, Executor, ResultStore, DataLocationRegistry}
+  alias Handoff.DAG
+  alias Handoff.DataLocationRegistry
+  alias Handoff.Executor
+  alias Handoff.Function
+  alias Handoff.ResultStore
 
   defp create_simple_dag(dag_id, val_prefix) do
-    DAG.new(dag_id)
+    dag_id
+    |> DAG.new()
     |> DAG.add_function(%Function{
       id: :source,
       args: [],
@@ -65,7 +70,8 @@ defmodule Handoff.ConcurrentExecutionTest do
 
   describe "Concurrent Distributed DAG Execution (Handoff.DistributedExecutor)" do
     defp create_dist_dag(dag_id, val_prefix, node_to_run_on) do
-      DAG.new(dag_id)
+      dag_id
+      |> DAG.new()
       |> DAG.add_function(%Function{
         id: :source_op,
         args: [],
@@ -100,8 +106,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       task_a = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_a, []) end)
       task_b = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_b, []) end)
 
-      res_a = Task.await(task_a, 15000)
-      res_b = Task.await(task_b, 15000)
+      res_a = Task.await(task_a, 15_000)
+      res_b = Task.await(task_b, 15_000)
 
       assert {:ok, %{dag_id: ^dag_a_id, results: results_a}} = res_a
       assert {:ok, %{dag_id: ^dag_b_id, results: results_b}} = res_b

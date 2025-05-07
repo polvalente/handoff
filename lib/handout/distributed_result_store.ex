@@ -6,8 +6,11 @@ defmodule Handoff.DistributedResultStore do
   """
 
   use GenServer
+
+  alias Handoff.DataLocationRegistry
+  alias Handoff.ResultStore
+
   require Logger
-  alias Handoff.{ResultStore, DataLocationRegistry}
 
   # Client API
 
@@ -160,8 +163,7 @@ defmodule Handoff.DistributedResultStore do
   @impl true
   def handle_cast({:broadcast_result, dag_id, function_id, result}, state) do
     # Send the result to all other nodes for the specific DAG
-    Node.list()
-    |> Enum.each(fn node ->
+    Enum.each(Node.list(), fn node ->
       :rpc.cast(node, ResultStore, :store, [dag_id, function_id, result])
     end)
 
@@ -171,8 +173,7 @@ defmodule Handoff.DistributedResultStore do
   @impl true
   def handle_cast({:broadcast_clear, dag_id}, state) do
     # Send clear command to all other nodes for the specific DAG
-    Node.list()
-    |> Enum.each(fn node ->
+    Enum.each(Node.list(), fn node ->
       :rpc.cast(node, ResultStore, :clear, [dag_id])
     end)
 
