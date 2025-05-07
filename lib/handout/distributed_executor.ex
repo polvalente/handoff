@@ -311,9 +311,6 @@ defmodule Handout.DistributedExecutor do
           args_for_execution = fetch_arguments(dag.id, function.args, executed_acc, function.node)
 
           # Execute the function on the assigned node
-          Logger.debug(
-            "Executing function #{function_id} on node #{inspect(function.node)} with args: #{inspect(args_for_execution)}"
-          )
 
           try do
             # Pass `args_for_execution` which are actual values for local, or arg_ids for remote.
