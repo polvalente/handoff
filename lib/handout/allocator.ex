@@ -20,4 +20,13 @@ defmodule Handoff.Allocator do
               functions :: [Handoff.Function.t()],
               caps :: %{node() => map()}
             ) :: %{term() => node()}
+
+  defmodule AllocationError do
+    @moduledoc false
+    defexception [:message]
+
+    def exception(message) do
+      %AllocationError{message: message}
+    end
+  end
 end

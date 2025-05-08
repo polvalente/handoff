@@ -7,6 +7,7 @@ defmodule Handoff.DistributedExecutor do
 
   use GenServer
 
+  alias Handoff.Allocator.AllocationError
   alias Handoff.DAG
   alias Handoff.DataLocationRegistry
   alias Handoff.ResultStore
@@ -155,11 +156,26 @@ defmodule Handoff.DistributedExecutor do
       end
 
     # Begin execution process
-    spawn_link(fn ->
-      execute_dag(dag, opts, from, state.max_retries)
-    end)
+    task =
+      Task.async(fn ->
+        try do
+          execute_dag(dag, opts, from, state.max_retries)
+        rescue
+          e in [AllocationError] ->
+            GenServer.reply(from, {:error, {:allocation_error, e.message}})
 
-    {:noreply, state}
+          exception ->
+            GenServer.reply(from, {:error, exception})
+        end
+      end)
+
+    {:noreply, %{state | executing: Map.put(state.executing, task.ref, from)}}
+  end
+
+  @impl true
+  def handle_info({ref, _result}, %{executing: executing} = state)
+      when is_map_key(executing, ref) do
+    {:noreply, %{state | executing: Map.delete(executing, ref)}}
   end
 
   @impl true
@@ -185,6 +201,20 @@ defmodule Handoff.DistributedExecutor do
         {:noreply,
          %{state | monitored: monitored, executing: executing, retry_count: retry_count}}
     end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, _, _, reason}, %{executing: executing} = state)
+      when is_map_key(executing, ref) do
+    if reason != :normal do
+      # A monitored function execution crashed
+      Logger.warning("Function execution crashed: #{inspect(reason)}")
+
+      # Retry mechanism would go here
+      GenServer.reply(executing[ref], {:error, reason})
+    end
+
+    {:noreply, %{state | executing: Map.delete(executing, ref)}}
   end
 
   @impl true
@@ -434,10 +464,8 @@ defmodule Handoff.DistributedExecutor do
     else
       {:error, :resources_unavailable} ->
         {:error,
-         %RuntimeError{
-           message:
-             "Resources unavailable for function #{function.id} on node #{function.node} (request by orchestrator)"
-         }}
+         {:allocation_error,
+          "Resources unavailable for function #{function.id} on node #{function.node}"}}
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
@@ -447,10 +475,7 @@ defmodule Handoff.DistributedExecutor do
         execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
 
       {:error, reason} ->
-        raise %RuntimeError{
-          message:
-            "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
-        }
+        raise "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
     end
   rescue
     e ->

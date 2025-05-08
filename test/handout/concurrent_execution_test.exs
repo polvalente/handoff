@@ -15,12 +15,14 @@ defmodule Handoff.ConcurrentExecutionTest do
     |> DAG.add_function(%Function{
       id: :source,
       args: [],
-      code: fn -> "#{val_prefix}_source_val" end
+      code: &Elixir.Function.identity/1,
+      extra_args: ["#{val_prefix}_source_val"]
     })
     |> DAG.add_function(%Function{
       id: :process,
       args: [:source],
-      code: fn source_val -> "#{val_prefix}_processed_#{source_val}" end
+      code: &Handoff.DistributedTestFunctions.g/2,
+      extra_args: ["#{val_prefix}_processed"]
     })
   end
 
@@ -41,19 +43,19 @@ defmodule Handoff.ConcurrentExecutionTest do
       # Check DAG 1 results and ID
       assert res1.dag_id == dag_id_1
       assert res1.results[:source] == "dag1_source_val"
-      assert res1.results[:process] == "dag1_processed_dag1_source_val"
+      assert res1.results[:process] == ["dag1_source_val", "dag1_processed"]
 
       # Check DAG 2 results and ID
       assert res2.dag_id == dag_id_2
       assert res2.results[:source] == "dag2_source_val"
-      assert res2.results[:process] == "dag2_processed_dag2_source_val"
+      assert res2.results[:process] == ["dag2_source_val", "dag2_processed"]
 
       # Verify data isolation in ResultStore
       assert {:ok, "dag1_source_val"} = ResultStore.get(dag_id_1, :source)
-      assert {:ok, "dag1_processed_dag1_source_val"} = ResultStore.get(dag_id_1, :process)
+      assert {:ok, ["dag1_source_val", "dag1_processed"]} = ResultStore.get(dag_id_1, :process)
       assert {:ok, "dag2_source_val"} = ResultStore.get(dag_id_2, :source)
 
-      assert {:ok, "dag2_processed_dag2_source_val"} =
+      assert {:ok, ["dag2_source_val", "dag2_processed"]} =
                ResultStore.get(dag_id_2, :process)
 
       # Verify that an item ID from dag1 cannot be fetched using dag2's ID if
@@ -78,7 +80,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       |> DAG.add_function(%Function{
         id: :source_op,
         args: [],
-        code: fn -> "#{val_prefix}_source_data" end,
+        code: &Elixir.Function.identity/1,
+        extra_args: ["#{val_prefix}_source_data"],
         # cost: %{cpu: 1}, # Ensure it gets assigned to a node
         # Explicitly assign for testing, though allocator would do it
         node: node_to_run_on
@@ -86,7 +89,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       |> DAG.add_function(%Function{
         id: :process_op,
         args: [:source_op],
-        code: fn data -> "#{val_prefix}_processed_#{data}" end,
+        code: &Handoff.DistributedTestFunctions.g/2,
+        extra_args: ["#{val_prefix}_processed"],
         # cost: %{cpu: 1},
         node: node_to_run_on
       })
@@ -115,9 +119,9 @@ defmodule Handoff.ConcurrentExecutionTest do
       assert {:ok, %{dag_id: ^dag_b_id, results: results_b}} = res_b
 
       assert results_a[:source_op] == "dagA_source_data"
-      assert results_a[:process_op] == "dagA_processed_dagA_source_data"
+      assert results_a[:process_op] == ["dagA_source_data", "dagA_processed"]
       assert results_b[:source_op] == "dagB_source_data"
-      assert results_b[:process_op] == "dagB_processed_dagB_source_data"
+      assert results_b[:process_op] == ["dagB_source_data", "dagB_processed"]
 
       # Verify ResultStore isolation
       assert {:ok, "dagA_source_data"} = ResultStore.get(dag_a_id, :source_op)

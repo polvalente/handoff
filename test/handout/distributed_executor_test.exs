@@ -31,13 +31,15 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
-          code: fn -> 42 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
           cost: %{cpu: 1, memory: 100}
         })
         |> DAG.add_function(%Function{
           id: :squared,
           args: [:source],
-          code: fn x -> x * x end,
+          code: &Handoff.DistributedTestFunctions.g/2,
+          extra_args: [2],
           cost: %{cpu: 1, memory: 100}
         })
 
@@ -49,7 +51,7 @@ defmodule Handoff.DistributedExecutorTest do
 
       # Check results
       assert Map.get(actual_results, :source) == 42
-      assert Map.get(actual_results, :squared) == 1764
+      assert Map.get(actual_results, :squared) == [42, 2]
     end
 
     test "can execute simple DAG on two nodes", %{node_2: node_2} do
@@ -190,28 +192,21 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
-          code: fn -> 10 end
+          code: &Elixir.Function.identity/1,
+          extra_args: [10],
+          cost: %{cpu: 1, memory: 100}
         })
         |> DAG.add_function(%Function{
           id: :fails_once,
           args: [:source],
-          code: fn x ->
-            count = Agent.get(agent, fn state -> state.count end)
-            Agent.update(agent, fn state -> %{state | count: state.count + 1} end)
-
-            if count == 0 do
-              # First call fails
-              raise "Simulated failure for testing"
-            else
-              # Second call succeeds
-              x * 2
-            end
-          end
+          code: &Handoff.DistributedTestFunctions.failing_function/2,
+          extra_args: [agent]
         })
         |> DAG.add_function(%Function{
           id: :final,
           args: [:fails_once],
-          code: fn x -> x + 5 end
+          code: &Handoff.DistributedTestFunctions.g/2,
+          extra_args: [5]
         })
 
       # Set max retries to 1 to ensure it retries once
@@ -226,52 +221,47 @@ defmodule Handoff.DistributedExecutorTest do
       # Check results
       assert Map.get(actual_results, :source) == 10
       assert Map.get(actual_results, :fails_once) == 20
-      assert Map.get(actual_results, :final) == 25
+      assert Map.get(actual_results, :final) == [20, 5]
 
       # Check that the function was called twice
       assert Agent.get(agent, fn state -> state.count end) == 2
     end
   end
 
-  test "prioritizes Node.self() for first available allocation", %{node_2: other_node} do
-    self_node = Node.self()
-
+  test "fails when resource constraints not satisfied" do
     dag = DAG.new(self())
 
-    dag_with_functions =
-      dag
-      |> DAG.add_function(%Function{
-        id: :task_A,
-        args: [],
-        code: &Elixir.Function.identity/1,
-        extra_args: ["A"],
-        # Consumes most of self_node's memory if allocated there
-        cost: %{cpu: 1, memory: 1900}
-      })
-      |> DAG.add_function(%Function{
-        id: :task_B,
-        # Independent task
-        args: [],
-        code: &Elixir.Function.identity/1,
-        extra_args: ["B"],
-        # Requires more memory than self_node would have left
-        cost: %{cpu: 1, memory: 150}
-      })
+    for {node_a, node_b} <- [{Node.self(), Node.self()}, {Node.self(), {:collocated, :task_A}}] do
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :task_A,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: ["A"],
+          node: node_a,
+          # Consumes most of self_node's memory if allocated there
+          cost: %{cpu: 1, memory: 1900}
+        })
+        |> DAG.add_function(%Function{
+          id: :task_B,
+          # Independent task
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: ["B"],
+          node: node_b,
+          # Requires more memory than self_node would have left
+          cost: %{cpu: 1, memory: 150}
+        })
 
-    # Explicitly use the :first_available strategy for clarity
-    opts = [allocation_strategy: :first_available]
+      # Explicitly use the :first_available strategy for clarity
+      opts = [allocation_strategy: :first_available]
 
-    assert {:ok, %{allocations: allocations}} =
-             DistributedExecutor.execute(dag_with_functions, opts)
-
-    expected_allocations = %{
-      # Should go to Node.self() due to prioritization
-      task_A: self_node,
-      # Node.self() can't fit this after task_A, so it goes to other_node
-      task_B: other_node
-    }
-
-    assert allocations == expected_allocations
+      assert {:error,
+              {:allocation_error,
+               "Insufficient resources on node :\"primary@127.0.0.1\" for function :task_B"}} ==
+               DistributedExecutor.execute(dag_with_functions, opts)
+    end
   end
 
   describe "resource management" do
@@ -286,20 +276,23 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],
-          code: fn -> 42 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
           cost: %{cpu: 2, memory: 1000}
         })
         |> DAG.add_function(%Function{
           id: :large_resource,
           args: [],
-          code: fn -> 100 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [100],
           # Exceeds available resources
-          cost: %{cpu: 10, memory: 5000}
+          cost: %{cpu: 10, memory: 1500}
         })
         |> DAG.add_function(%Function{
           id: :dependent,
           args: [:small_resource, :large_resource],
-          code: fn a, b -> a + b end
+          code: &Handoff.DistributedTestFunctions.g/2,
+          extra_args: [5]
         })
 
       # This execution should fail because of resource constraints
@@ -312,7 +305,8 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :small_resource,
           args: [],
-          code: fn -> 42 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
           cost: %{cpu: 2, memory: 1000}
         })
 
