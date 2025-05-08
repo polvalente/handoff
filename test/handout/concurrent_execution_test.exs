@@ -1,7 +1,7 @@
 defmodule Handoff.ConcurrentExecutionTest do
   # async: false for controlled concurrency testing initially
   # Can be async now
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Handoff.DAG
   alias Handoff.DataLocationRegistry
