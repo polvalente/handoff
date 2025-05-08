@@ -172,7 +172,8 @@ defmodule Handoff.DAG do
   defp add_functions(graph, functions) do
     # Add vertices and edges
     Enum.reduce_while(functions, :ok, fn {id, function}, _acc ->
-      with :ok <- add_vertex(graph, id),
+      with :ok <- validate_definition(function),
+           :ok <- add_vertex(graph, id),
            :ok <- add_dependencies(graph, function) do
         {:cont, :ok}
       else
@@ -180,6 +181,14 @@ defmodule Handoff.DAG do
           {:halt, error}
       end
     end)
+  end
+
+  defp validate_definition(function) do
+    if function.type == :inline and not is_nil(function.node) do
+      {:error, {:invalid_inline_function_node, function.id}}
+    else
+      :ok
+    end
   end
 
   defp check_for_missing_dependencies(graph) do

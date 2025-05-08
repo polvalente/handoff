@@ -25,4 +25,9 @@ defmodule Handoff.DistributedTestFunctions do
       x * 2
     end
   end
+
+  def counting_identity_function(value, counter_agent) do
+    Agent.update(counter_agent, fn state -> %{count: state.count + 1} end)
+    value
+  end
 end

@@ -16,10 +16,7 @@ defmodule Handoff.RemoteExecutionWrapper do
   Resource management (request/release) is assumed to be handled by the orchestrator
   for the target node before this function is called.
   """
-  def execute_and_store(dag_id, function_struct, arg_ids, orchestrator_node \\ nil) do
-    # Default orchestrator to the calling node
-    # if not specified (process distributed from origin node)
-    # This ensures we know which node is coordinating the DAG execution
+  def execute_and_store(dag_id, function_struct, arg_ids, orchestrator_node, all_dag_functions) do
     orchestrator = orchestrator_node || Node.self()
 
     if Node.self() != function_struct.node do
@@ -29,8 +26,8 @@ defmodule Handoff.RemoteExecutionWrapper do
     end
 
     try do
-      # 1. Fetch arguments with knowledge of the orchestrator node
-      resolved_args = fetch_arguments(dag_id, arg_ids, orchestrator)
+      # 1. Fetch arguments, handling inlines locally on this worker node.
+      resolved_args = fetch_arguments(dag_id, arg_ids, orchestrator, all_dag_functions)
 
       # 2. Execute the function code
       actual_result =
@@ -71,19 +68,47 @@ defmodule Handoff.RemoteExecutionWrapper do
   end
 
   @doc false
-  # Fetches arguments using the orchestrator node as the source of truth
-  defp fetch_arguments(dag_id, arg_ids, orchestrator) do
-    Enum.map(arg_ids, fn arg_id ->
-      # Check local store first for efficiency
-      case ResultStore.get(dag_id, arg_id) do
-        {:ok, value} ->
-          value
+  # Fetches arguments for the consumer function. If an argument is an inline function,
+  # it's executed locally on this worker node (JIT).
+  # Regular arguments are fetched from local ResultStore or via orchestrator/source node.
+  defp fetch_arguments(dag_id, arg_ids_for_consumer, orchestrator, all_dag_functions) do
+    Enum.map(arg_ids_for_consumer, fn arg_id ->
+      # Check if arg_id refers to a defined function
+      function_def = Map.get(all_dag_functions, arg_id)
 
-        {:error, :not_found} ->
-          # If not found locally, consult the orchestrator for this argument's location
-          fetch_from_orchestrator(dag_id, arg_id, orchestrator)
+      if function_def && function_def.type == :inline do
+        # Inline function: execute it locally on this worker node.
+        _execute_inline_on_worker(dag_id, function_def, orchestrator, all_dag_functions)
+      else
+        # Regular argument or initial literal: fetch it.
+        # Check local store first for efficiency (might be a pre-cached regular arg)
+        case ResultStore.get(dag_id, arg_id) do
+          {:ok, value} ->
+            value
+
+          {:error, :not_found} ->
+            # If not found locally, consult the orchestrator for this argument's location
+            # This path is for regular, non-inline arguments.
+            fetch_from_orchestrator(dag_id, arg_id, orchestrator)
+        end
       end
     end)
+  end
+
+  # Helper: Executes an inline function locally on this worker node.
+  defp _execute_inline_on_worker(dag_id, inline_function_def, orchestrator, all_dag_functions) do
+    # Fetch arguments for the inline function itself.
+    # These args might also be inline (leading to recursion) or regular.
+    inline_args =
+      fetch_arguments(
+        dag_id,
+        inline_function_def.args,
+        orchestrator,
+        all_dag_functions
+      )
+
+    # Execute the inline function
+    apply(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
   end
 
   # Helper: fetch an argument via the orchestrator

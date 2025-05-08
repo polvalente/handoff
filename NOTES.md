@@ -1,1 +1,0 @@
-- Function: some kind of annotation that a given function should always be ran instead of the value being saved.

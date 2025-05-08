@@ -228,6 +228,68 @@ defmodule Handoff.DistributedExecutorTest do
     end
   end
 
+  describe "inline function execution" do
+    test "executes inline function multiple times when depended upon by multiple functions" do
+      dag = DAG.new({self(), :inline_test})
+      {:ok, counter_agent} = Agent.start_link(fn -> %{count: 0} end)
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          # Inline function
+          id: :a,
+          args: [],
+          type: :inline,
+          # As per validation rule for inline
+          node: nil,
+          code: &Handoff.DistributedTestFunctions.counting_identity_function/2,
+          extra_args: [10, counter_agent]
+        })
+        |> DAG.add_function(%Function{
+          # Depends on :a
+          id: :b,
+          args: [:a],
+          code: &Kernel.+/2,
+          # b_result = a_result + 5
+          extra_args: [5],
+          # Regular function, assign cost
+          cost: %{cpu: 1, memory: 100}
+        })
+        |> DAG.add_function(%Function{
+          # Depends on :a
+          id: :c,
+          args: [:a],
+          code: &Kernel.*/2,
+          # c_result = a_result * 3
+          extra_args: [3],
+          cost: %{cpu: 1, memory: 100}
+        })
+        |> DAG.add_function(%Function{
+          id: :d,
+          args: [:b, :c],
+          code: &Handoff.DistributedTestFunctions.g/2,
+          cost: %{cpu: 1, memory: 100}
+        })
+
+      # Execute the DAG (all on local node for simplicity of testing inline behavior)
+      assert {:ok, %{results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      # Check results
+      # :a is inline, so it won't be in final results map
+      assert not Map.has_key?(actual_results, :a)
+      # :a should return 10. So :b = 10 + 5 = 15
+      assert Map.get(actual_results, :b) == 15
+      # :a should return 10. So :c = 10 * 3 = 30
+      assert Map.get(actual_results, :c) == 30
+      # :d depends on :b and :c
+      assert Map.get(actual_results, :d) == [15, 30]
+
+      # Check that :a was called twice (once for :b, once for :c)
+      assert Agent.get(counter_agent, fn state -> state.count end) == 2
+    end
+  end
+
   test "fails when resource constraints not satisfied" do
     dag = DAG.new(self())
 
