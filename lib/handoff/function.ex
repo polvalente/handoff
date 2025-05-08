@@ -13,6 +13,7 @@ defmodule Handoff.Function do
   * `:node` - Optional node assignment for distributed execution
   * `:cost` - Optional resource requirements map (e.g., %{cpu: 2, memory: 1000})
   * `:extra_args` - Additional arguments provided at execution time
+  * `:type` - Type of the function, :regular or :inline
 
   ## Examples
 
@@ -67,7 +68,9 @@ defmodule Handoff.Function do
     # Optional resource cost for execution planning
     :cost,
     # Additional arguments provided at execution time
-    extra_args: []
+    extra_args: [],
+    # Type of the function, :regular or :inline
+    type: :regular
   ]
 
   @type t :: %__MODULE__{
@@ -77,6 +80,7 @@ defmodule Handoff.Function do
           results: term() | nil,
           node: node() | nil,
           cost: map() | nil,
-          extra_args: list()
+          extra_args: list(),
+          type: :regular | :inline
         }
 end

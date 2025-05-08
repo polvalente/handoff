@@ -321,17 +321,8 @@ defmodule Handoff.DistributedExecutor do
       Enum.filter(to_be_executed, fn function_id ->
         function = Map.get(dag.functions, function_id)
 
-        # Check if all dependencies are executed
-        all_deps_executed? =
-          Enum.all?(function.args, fn arg_id ->
-            # An argument is considered executed if it's in the executed map
-            # OR if it's an initial argument (not a function_id from this dag).
-            # For simplicity, we assume initial args are always "ready".
-            # Proper handling of initial args vs. function results would be more robust here.
-            Map.has_key?(executed, arg_id) or not Map.has_key?(dag.functions, arg_id)
-          end)
-
-        all_deps_executed?
+        # Check if all dependencies are satisfied
+        all_deps_satisfied?(function, dag, executed)
       end)
 
     # Execute ready functions
@@ -345,7 +336,7 @@ defmodule Handoff.DistributedExecutor do
     # Check for completed functions if there are any pending
     if MapSet.size(new_pending) > 0 do
       # Small delay to avoid tight polling
-      :timer.sleep(100)
+      :timer.sleep(100 + :rand.uniform(20))
 
       # Check for completed functions
       {still_pending, newly_executed} =
@@ -396,6 +387,30 @@ defmodule Handoff.DistributedExecutor do
     end
   end
 
+  defp all_deps_satisfied?(function, dag, executed) do
+    Enum.all?(function.args, fn arg_id ->
+      dep_function_def = Map.get(dag.functions, arg_id)
+
+      cond do
+        is_nil(dep_function_def) ->
+          # Initial literal argument
+          true
+
+        dep_function_def.type == :inline ->
+          # Inline dependencies are resolved JIT by the consumer
+          true
+
+        Map.has_key?(executed, arg_id) ->
+          # Regular function dependency's result is available
+          true
+
+        true ->
+          # Dependency not yet satisfied
+          false
+      end
+    end)
+  end
+
   defp execute_ready_function(
          dag,
          max_retries,
@@ -404,61 +419,68 @@ defmodule Handoff.DistributedExecutor do
        ) do
     function = Map.get(dag.functions, function_id)
 
-    # Prepare arguments. For remote execution, this will pass arg_ids.
-    # For local, it resolves them.
-    args_for_execution = fetch_arguments(dag.id, function.args, executed_acc, function.node)
+    if function.type == :inline do
+      # Inline functions are executed on demand by their consumers.
+      # Their actual value is not stored in the main `executed_acc` map.
+      # We just remove it from the `to_be_executed` set.
+      new_to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+      {pending_acc, new_to_be_executed_acc, executed_acc}
+    else
+      # Regular function execution logic
+      args_for_execution =
+        fetch_arguments(dag.id, function.args, executed_acc, function.node, dag.functions)
 
-    # Execute the function on the assigned node
+      try do
+        case execute_function_on_node(
+               dag.id,
+               function,
+               args_for_execution,
+               max_retries,
+               dag.functions
+             ) do
+          {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
+            executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
+            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+            {pending_acc, to_be_executed_acc, executed_acc}
 
-    try do
-      # Pass `args_for_execution` which are actual values for local, or arg_ids for remote.
-      case execute_function_on_node(dag.id, function, args_for_execution, max_retries) do
-        {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
-          # For remote execution, the result is not returned directly.
-          # We mark it as executed by adding its ID with a placeholder or status.
-          # The actual result can be fetched via Handoff.get_result if needed later.
-          executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
+          {:ok, result} ->
+            :ok = ResultStore.store(dag.id, function_id, result)
+            DataLocationRegistry.register(dag.id, function_id, function.node)
+            executed_acc = Map.put(executed_acc, function_id, result)
+            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+            {pending_acc, to_be_executed_acc, executed_acc}
 
-        # This case is for local execution where result is returned directly
-        {:ok, result} ->
-          # Store result locally
-          :ok = ResultStore.store(dag.id, function_id, result)
+          {:async, _pid} ->
+            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+            pending_acc = MapSet.put(pending_acc, function_id)
+            {pending_acc, to_be_executed_acc, executed_acc}
 
-          # Register result location in the registry
-          DataLocationRegistry.register(dag.id, function_id, function.node)
-
-          # Add to executed and remove from to_be_executed
-          executed_acc = Map.put(executed_acc, function_id, result)
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
-
-        {:async, _pid} ->
-          # Function is executing asynchronously
-          # Add to pending and remove from to_be_executed
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          pending_acc = MapSet.put(pending_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
-
-        {:error, reason} ->
-          Logger.error("Failed to execute function #{function_id}: #{inspect(reason)}")
-          executed_acc = Map.put(executed_acc, function_id, {:error, reason})
+          {:error, reason} ->
+            Logger.error("Failed to execute function #{function_id}: #{inspect(reason)}")
+            executed_acc = Map.put(executed_acc, function_id, {:error, reason})
+            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+            {pending_acc, to_be_executed_acc, executed_acc}
+        end
+      catch
+        _kind, error ->
+          Logger.error("Exception when executing function #{function_id}: #{inspect(error)}")
+          executed_acc = Map.put(executed_acc, function_id, {:error, error})
           to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
           {pending_acc, to_be_executed_acc, executed_acc}
       end
-    catch
-      _kind, error ->
-        Logger.error("Exception when executing function #{function_id}: #{inspect(error)}")
-        executed_acc = Map.put(executed_acc, function_id, {:error, error})
-        to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-        {pending_acc, to_be_executed_acc, executed_acc}
     end
   end
 
-  defp execute_function_on_node(dag_id, function, args, max_retries, current_retry \\ 0) do
+  defp execute_function_on_node(
+         dag_id,
+         function,
+         args,
+         max_retries,
+         all_dag_functions,
+         current_retry \\ 0
+       ) do
     with {:ok, resources_requested?} <- maybe_request_resources(function),
-         {:ok, result} <- execute_with_node_type(dag_id, function, args),
+         {:ok, result} <- execute_with_node_type(dag_id, function, args, all_dag_functions),
          :ok <- maybe_release_resources(function, resources_requested?) do
       {:ok, result}
     else
@@ -472,7 +494,14 @@ defmodule Handoff.DistributedExecutor do
           "Retrying function #{function.id} execution (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(reason)}"
         )
 
-        execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
+        execute_function_on_node(
+          dag_id,
+          function,
+          args,
+          max_retries,
+          all_dag_functions,
+          current_retry + 1
+        )
 
       {:error, reason} ->
         raise "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
@@ -484,7 +513,14 @@ defmodule Handoff.DistributedExecutor do
           "Retrying function #{function.id} after error (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(e)}"
         )
 
-        execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
+        execute_function_on_node(
+          dag_id,
+          function,
+          args,
+          max_retries,
+          all_dag_functions,
+          current_retry + 1
+        )
       else
         reraise %RuntimeError{
                   message:
@@ -513,13 +549,13 @@ defmodule Handoff.DistributedExecutor do
     :ok
   end
 
-  defp execute_with_node_type(dag_id, function, args) do
+  defp execute_with_node_type(dag_id, function, args, all_dag_functions) do
     # Local execution (node is self or nil)
     if !function.node || function.node == Node.self() do
       execute_local(function, args)
     else
       # Remote execution
-      execute_remote(dag_id, function, args)
+      execute_remote(dag_id, function, args, all_dag_functions)
     end
   end
 
@@ -528,12 +564,33 @@ defmodule Handoff.DistributedExecutor do
     {:ok, result}
   end
 
-  defp execute_remote(dag_id, function, args) do
+  defp _execute_inline_local(dag_id, inline_function_def, executed_results, all_dag_functions) do
+    # Fetch arguments for the inline function itself.
+    # These might also be inline or regular.
+    # Note: target_node for inline's args is Node.self() as it's executing locally.
+    inline_args =
+      fetch_arguments(
+        dag_id,
+        inline_function_def.args,
+        executed_results,
+        # Inline functions execute on the consumer's node
+        Node.self(),
+        all_dag_functions
+      )
+
+    # Execute the inline function
+    apply(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
+  end
+
+  defp execute_remote(dag_id, function, args, all_dag_functions) do
     case :rpc.call(function.node, Handoff.RemoteExecutionWrapper, :execute_and_store, [
            dag_id,
            function,
+           # These are arg_ids if consumer is remote
            args,
-           Node.self()
+           Node.self(),
+           # Pass the full map of function definitions
+           all_dag_functions
          ]) do
       {:ok, :result_stored_locally} ->
         DataLocationRegistry.register(dag_id, function.id, function.node)
@@ -549,11 +606,14 @@ defmodule Handoff.DistributedExecutor do
 
   # Allocate functions to nodes based on resource requirements
   defp allocate_functions(dag, node_caps, allocation_strategy) do
-    # Get list of functions from the DAG
-    functions = Map.values(dag.functions)
+    # Get list of functions from the DAG, excluding inline functions
+    regular_functions =
+      dag.functions
+      |> Map.values()
+      |> Enum.filter(fn func -> func.type == :regular end)
 
-    # Use SimpleAllocator to get node assignments
-    Handoff.SimpleAllocator.allocate(functions, node_caps, allocation_strategy)
+    # Use SimpleAllocator to get node assignments for regular functions
+    Handoff.SimpleAllocator.allocate(regular_functions, node_caps, allocation_strategy)
   end
 
   # Assign nodes to functions based on allocation result
@@ -604,22 +664,32 @@ defmodule Handoff.DistributedExecutor do
   end
 
   # New helper function to fetch arguments from appropriate nodes
-  defp fetch_arguments(dag_id, arg_ids, executed_results, target_node) do
+  defp fetch_arguments(dag_id, arg_ids, executed_results, target_node, all_dag_functions) do
     if target_node == Node.self() do
-      # Local execution on the orchestrator node: resolve arguments as before.
-      Enum.map(arg_ids, &resolve_argument(&1, dag_id, executed_results, target_node))
+      # Local execution on the orchestrator node: resolve arguments.
+      Enum.map(
+        arg_ids,
+        &resolve_argument(&1, dag_id, executed_results, target_node, all_dag_functions)
+      )
     else
       # Remote execution: Orchestrator passes arg_ids.
-      # RemoteExecutionWrapper on target_node will be responsible for fetching
-      # them from its *local* ResultStore.
+      # RemoteExecutionWrapper on target_node will be responsible for fetching/inlining.
       arg_ids
     end
   end
 
-  defp resolve_argument(arg_id, dag_id, executed_results, target_node) do
+  defp resolve_argument(arg_id, dag_id, executed_results, target_node, all_dag_functions) do
+    # Check if it's a function_id from this dag
+    function_def = Map.get(all_dag_functions, arg_id)
     result = Map.get(executed_results, arg_id)
 
     cond do
+      function_def && function_def.type == :inline ->
+        # Inline function: execute it locally (JIT) on the target_node (consumer's node)
+        # Since this resolve_argument is called when target_node == Node.self(),
+        # this means the consumer is local.
+        _execute_inline_local(dag_id, function_def, executed_results, all_dag_functions)
+
       result == :remote_executed_and_registered ->
         # Find where the result is stored
         with {:ok, source_node} <- DataLocationRegistry.lookup(dag_id, arg_id),
@@ -641,6 +711,11 @@ defmodule Handoff.DistributedExecutor do
         result
 
       true ->
+        # Argument is an initial input (literal) or a regular function not yet in executed_results
+        # For initial inputs, get_with_fetch will return it.
+        # For regular functions, if it's not in executed_results, it implies an issue
+        # unless it's an initial value not part of dag.functions.
+        # The original logic of get_with_fetch is for fetching from ResultStore.
         get_with_fetch(dag_id, arg_id, target_node)
     end
   end
