@@ -77,7 +77,6 @@ defmodule Handoff.SimpleAllocator do
       end)
 
     # Process each function and assign to the first available node
-    # The accumulator for the reduce is {assignments_map, current_available_resources_map, current_nodes_list}
     {assignments, _final_resources, _final_nodes} =
       Enum.reduce(functions, {%{}, initial_available_resources, nodes}, fn
         %Function{id: id, cost: cost},
