@@ -336,7 +336,7 @@ defmodule Handoff.DistributedExecutor do
     # Check for completed functions if there are any pending
     if MapSet.size(new_pending) > 0 do
       # Small delay to avoid tight polling
-      :timer.sleep(100 + :random.uniform(20))
+      :timer.sleep(100 + :rand.uniform(20))
 
       # Check for completed functions
       {still_pending, newly_executed} =
