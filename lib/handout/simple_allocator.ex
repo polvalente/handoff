@@ -12,6 +12,7 @@ defmodule Handoff.SimpleAllocator do
 
   alias Handoff.Function
   alias Handoff.SimpleResourceTracker
+  alias Handoff.Allocator.AllocationError
 
   @doc """
   Allocate functions to nodes based on resource requirements and node capabilities.
@@ -80,36 +81,23 @@ defmodule Handoff.SimpleAllocator do
     {pinned_functions, dynamic_functions} =
       Enum.split_with(functions, fn %Function{node: node} -> not is_nil(node) end)
 
-    # Process pinned functions first
-    {intermediate_assignments, intermediate_resources} =
-      Enum.reduce(
-        pinned_functions,
-        {%{}, initial_available_resources},
-        fn %Function{id: id, cost: cost, node: assigned_node}, {acc_assignments, acc_resources} ->
-          # Assume assigned_node is valid and its resources are tracked.
-          # If the node is not in caps (and thus not in acc_resources initially),
-          # this might indicate an issue or a node without declared capacity.
-          # For now, we proceed assuming it's a known node.
-          # If cost is nil, treat as no resource requirement for subtraction.
-          actual_cost = cost || %{}
-          node_current_resources = Map.get(acc_resources, assigned_node, %{cpu: 0, memory: 0})
+    {collocated_functions, pinned_functions} =
+      Enum.split_with(pinned_functions, fn
+        %Function{node: {:collocated, _}} -> true
+        _ -> false
+      end)
 
-          # For pinned functions, we assign them regardless of can_allocate? outcome,
-          # as pinning implies a directive. Resources are subtracted.
-          updated_node_res = subtract_resources(node_current_resources, actual_cost)
-          new_resources = Map.put(acc_resources, assigned_node, updated_node_res)
-          new_assignments = Map.put(acc_assignments, id, assigned_node)
-          {new_assignments, new_resources}
-        end
-      )
+    # Process pinned functions first
+    {pinned_assignments, pinned_resources} =
+      perform_pinned_allocation(pinned_functions, %{}, initial_available_resources)
 
     # Process remaining (dynamic) functions
-    {final_assignments_map, _final_resources, _final_nodes} =
+    {dynamic_assignments_map, dynamic_resources, _dynamic_nodes} =
       Enum.reduce(
         # Use functions not already pinned
         dynamic_functions,
         # Start with results from pinned
-        {intermediate_assignments, intermediate_resources, nodes},
+        {pinned_assignments, pinned_resources, nodes},
         fn
           %Function{id: id, cost: cost},
           {current_assignments, available_resources, current_nodes_list} ->
@@ -130,7 +118,43 @@ defmodule Handoff.SimpleAllocator do
         end
       )
 
+    {final_assignments_map, _} =
+      collocated_functions
+      |> Enum.map(fn %Function{node: {:collocated, target_id}} = function ->
+        target_node = Map.get(dynamic_assignments_map, target_id)
+        %{function | node: target_node}
+      end)
+      |> perform_pinned_allocation(dynamic_assignments_map, dynamic_resources)
+
     final_assignments_map
+  end
+
+  defp perform_pinned_allocation(functions, assignments, available_resources) do
+    Enum.reduce(
+      functions,
+      {assignments, available_resources},
+      fn %Function{id: id, cost: cost, node: assigned_node}, {acc_assignments, acc_resources} ->
+        # Assume assigned_node is valid and its resources are tracked.
+        # If the node is not in caps (and thus not in acc_resources initially),
+        # this might indicate an issue or a node without declared capacity.
+        # For now, we proceed assuming it's a known node.
+        # If cost is nil, treat as no resource requirement for subtraction.
+        cost = cost || %{}
+        node_current_resources = Map.get(acc_resources, assigned_node, %{cpu: 0, memory: 0})
+
+        if not can_allocate?(node_current_resources, cost) do
+          raise AllocationError,
+                "Insufficient resources on node #{inspect(assigned_node)} for function #{inspect(id)}"
+        end
+
+        # For pinned functions, we assign them regardless of can_allocate? outcome,
+        # as pinning implies a directive. Resources are subtracted.
+        updated_node_res = subtract_resources(node_current_resources, cost)
+        new_resources = Map.put(acc_resources, assigned_node, updated_node_res)
+        new_assignments = Map.put(acc_assignments, id, assigned_node)
+        {new_assignments, new_resources}
+      end
+    )
   end
 
   defp find_node_assignment(id, current_assignments, available_resources, cost, nodes) do

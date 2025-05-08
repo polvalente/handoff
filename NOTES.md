@@ -1,2 +1,1 @@
-- Function: add possibility of forcing a function to have the same node as another with `node: {:collocated, :another_function_id}`
 - Function: some kind of annotation that a given function should always be ran instead of the value being saved. This will allow us to load certain layers of a neural network from disk regardless of where they're stored.

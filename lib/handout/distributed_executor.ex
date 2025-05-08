@@ -11,6 +11,7 @@ defmodule Handoff.DistributedExecutor do
   alias Handoff.DataLocationRegistry
   alias Handoff.ResultStore
   alias Handoff.SimpleResourceTracker
+  alias Handoff.Allocator.AllocationError
 
   require Logger
 
@@ -155,11 +156,26 @@ defmodule Handoff.DistributedExecutor do
       end
 
     # Begin execution process
-    spawn_link(fn ->
-      execute_dag(dag, opts, from, state.max_retries)
-    end)
+    task =
+      Task.async(fn ->
+        try do
+          execute_dag(dag, opts, from, state.max_retries)
+        rescue
+          e in [AllocationError] ->
+            GenServer.reply(from, {:error, {:allocation_error, e.message}})
 
-    {:noreply, state}
+          exception ->
+            GenServer.reply(from, {:error, exception})
+        end
+      end)
+
+    {:noreply, %{state | executing: Map.put(state.executing, task.ref, from)}}
+  end
+
+  @impl true
+  def handle_info({ref, _result}, %{executing: executing} = state)
+      when is_map_key(executing, ref) do
+    {:noreply, %{state | executing: Map.delete(executing, ref)}}
   end
 
   @impl true
@@ -185,6 +201,20 @@ defmodule Handoff.DistributedExecutor do
         {:noreply,
          %{state | monitored: monitored, executing: executing, retry_count: retry_count}}
     end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, _, _, reason}, %{executing: executing} = state)
+      when is_map_key(executing, ref) do
+    if reason != :normal do
+      # A monitored function execution crashed
+      Logger.warning("Function execution crashed: #{inspect(reason)}")
+
+      # Retry mechanism would go here
+      GenServer.reply(executing[ref], {:error, reason})
+    end
+
+    {:noreply, %{state | executing: Map.delete(executing, ref)}}
   end
 
   @impl true
