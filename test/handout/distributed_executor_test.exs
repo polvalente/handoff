@@ -60,7 +60,9 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
-          code: fn -> 42 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
+          node: Node.self(),
           cost: %{cpu: 1, memory: 1950}
         })
         |> DAG.add_function(%Function{
@@ -68,7 +70,7 @@ defmodule Handoff.DistributedExecutorTest do
           args: [:source],
           code: &Handoff.DistributedTestFunctions.g/2,
           extra_args: [1337],
-          cost: %{cpu: 1, memory: 100}
+          cost: %{cpu: 1, memory: 2000}
         })
         |> DAG.add_function(%Function{
           id: :final,
@@ -106,6 +108,71 @@ defmodule Handoff.DistributedExecutorTest do
 
       # The final function uses the result it fetched from the remote node
       assert Map.get(actual_results, :final) == [[42, 1337]]
+
+      # Double-check result is accessible on the remote node
+      assert {:ok, [42, 1337]} =
+               :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :concatenated])
+    end
+
+    test "can execute simple DAG on two nodes with another function forced to self", %{
+      node_2: node_2
+    } do
+      dag = DAG.new(self())
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :source,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
+          cost: %{cpu: 1, memory: 1950}
+        })
+        |> DAG.add_function(%Function{
+          id: :concatenated,
+          args: [:source],
+          code: &Handoff.DistributedTestFunctions.g/2,
+          extra_args: [1337],
+          node: Node.self(),
+          cost: %{cpu: 1, memory: 100}
+        })
+        |> DAG.add_function(%Function{
+          id: :final,
+          args: [:concatenated],
+          code: &Handoff.DistributedTestFunctions.f/1,
+          extra_args: [],
+          node: node_2,
+          cost: %{cpu: 1, memory: 50}
+        })
+
+      # Execute the DAG
+      assert {:ok,
+              %{
+                dag_id: returned_dag_id,
+                results: actual_results,
+                allocations: allocations
+              }} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert allocations == %{source: node_2, concatenated: Node.self(), final: node_2}
+
+      assert returned_dag_id == dag.id
+
+      # Check results
+      assert Map.get(actual_results, :source) == :remote_executed_and_registered
+
+      # We need to fetch the remote result directly
+      {:ok, source_result} =
+        :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :source])
+
+      assert source_result == 42
+
+      # For functions executed remotely,
+      # the result is registered but not included directly in results
+      assert Map.get(actual_results, :concatenated) == [42, 1337]
+
+      # The final function uses the result it fetched from the remote node
+      assert Map.get(actual_results, :final) == :remote_executed_and_registered
 
       # Double-check result is accessible on the remote node
       assert {:ok, [42, 1337]} =
@@ -164,6 +231,47 @@ defmodule Handoff.DistributedExecutorTest do
       # Check that the function was called twice
       assert Agent.get(agent, fn state -> state.count end) == 2
     end
+  end
+
+  test "prioritizes Node.self() for first available allocation", %{node_2: other_node} do
+    self_node = Node.self()
+
+    dag = DAG.new(self())
+
+    dag_with_functions =
+      dag
+      |> DAG.add_function(%Function{
+        id: :task_A,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: ["A"],
+        # Consumes most of self_node's memory if allocated there
+        cost: %{cpu: 1, memory: 1900}
+      })
+      |> DAG.add_function(%Function{
+        id: :task_B,
+        # Independent task
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: ["B"],
+        # Requires more memory than self_node would have left
+        cost: %{cpu: 1, memory: 150}
+      })
+
+    # Explicitly use the :first_available strategy for clarity
+    opts = [allocation_strategy: :first_available]
+
+    assert {:ok, %{allocations: allocations}} =
+             DistributedExecutor.execute(dag_with_functions, opts)
+
+    expected_allocations = %{
+      # Should go to Node.self() due to prioritization
+      task_A: self_node,
+      # Node.self() can't fit this after task_A, so it goes to other_node
+      task_B: other_node
+    }
+
+    assert allocations == expected_allocations
   end
 
   describe "resource management" do

@@ -1,5 +1,5 @@
 defmodule Handoff.DAGTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Handoff.DAG
   alias Handoff.Function

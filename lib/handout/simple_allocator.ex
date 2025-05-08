@@ -50,8 +50,19 @@ defmodule Handoff.SimpleAllocator do
   # Private functions for allocation strategies
 
   defp first_available_allocation(functions, caps) do
-    # Sort nodes for consistent allocation order
-    nodes = caps |> Map.keys() |> Enum.sort()
+    # Sort nodes for consistent allocation order, prioritizing Node.self()
+    all_nodes = caps |> Map.keys() |> Enum.sort()
+    self_node = Node.self()
+
+    nodes =
+      if self_node in all_nodes do
+        [self_node | List.delete(all_nodes, self_node)]
+      else
+        # If Node.self() is not in caps, log a warning or handle as per desired behavior.
+        # For now, just use the sorted list of all_nodes.
+        # IO.inspect("Warning: Node.self() (#{inspect(self_node)}) not found in capabilities map. Defaulting to standard sort.", label: "SimpleAllocator")
+        all_nodes
+      end
 
     # Initialize available resources for each node based on initial capabilities
     # This map will be updated as functions are assigned.
@@ -65,27 +76,65 @@ defmodule Handoff.SimpleAllocator do
         Map.put(acc, node, Map.get(caps, node, %{cpu: 0, memory: 0}))
       end)
 
-    # Process each function and assign to the first available node
-    # The accumulator for the reduce is {assignments_map, current_available_resources_map}
-    {assignments, _final_resources} =
-      Enum.reduce(functions, {%{}, initial_available_resources}, fn
-        %Function{id: id, cost: cost}, {current_assignments, available_resources} ->
-          # If function has no resource requirements, assign to the first node by default
-          # and don't alter available resources for this function.
-          if is_nil(cost) || cost == %{} do
-            assigned_node = List.first(nodes)
-            {Map.put(current_assignments, id, assigned_node), available_resources}
-          else
-            # Find first node that can satisfy the cost based on *current* available_resources
-            find_node_assignment(id, current_assignments, available_resources, cost, nodes)
-          end
-      end)
+    # Partition functions: those with a pre-defined node and those for dynamic allocation
+    {pinned_functions, dynamic_functions} =
+      Enum.split_with(functions, fn %Function{node: node} -> not is_nil(node) end)
 
-    assignments
+    # Process pinned functions first
+    {intermediate_assignments, intermediate_resources} =
+      Enum.reduce(
+        pinned_functions,
+        {%{}, initial_available_resources},
+        fn %Function{id: id, cost: cost, node: assigned_node}, {acc_assignments, acc_resources} ->
+          # Assume assigned_node is valid and its resources are tracked.
+          # If the node is not in caps (and thus not in acc_resources initially),
+          # this might indicate an issue or a node without declared capacity.
+          # For now, we proceed assuming it's a known node.
+          # If cost is nil, treat as no resource requirement for subtraction.
+          actual_cost = cost || %{}
+          node_current_resources = Map.get(acc_resources, assigned_node, %{cpu: 0, memory: 0})
+
+          # For pinned functions, we assign them regardless of can_allocate? outcome,
+          # as pinning implies a directive. Resources are subtracted.
+          updated_node_res = subtract_resources(node_current_resources, actual_cost)
+          new_resources = Map.put(acc_resources, assigned_node, updated_node_res)
+          new_assignments = Map.put(acc_assignments, id, assigned_node)
+          {new_assignments, new_resources}
+        end
+      )
+
+    # Process remaining (dynamic) functions
+    {final_assignments_map, _final_resources, _final_nodes} =
+      Enum.reduce(
+        # Use functions not already pinned
+        dynamic_functions,
+        # Start with results from pinned
+        {intermediate_assignments, intermediate_resources, nodes},
+        fn
+          %Function{id: id, cost: cost},
+          {current_assignments, available_resources, current_nodes_list} ->
+            if is_nil(cost) || cost == %{} do
+              assigned_node = List.first(current_nodes_list)
+
+              {Map.put(current_assignments, id, assigned_node), available_resources,
+               current_nodes_list}
+            else
+              find_node_assignment(
+                id,
+                current_assignments,
+                available_resources,
+                cost,
+                current_nodes_list
+              )
+            end
+        end
+      )
+
+    final_assignments_map
   end
 
   defp find_node_assignment(id, current_assignments, available_resources, cost, nodes) do
-    found_node_assignment =
+    found_node_assignment_tuple =
       Enum.find_value(nodes, fn node ->
         node_current_resources = Map.get(available_resources, node)
 
@@ -97,20 +146,24 @@ defmodule Handoff.SimpleAllocator do
           new_available_resources =
             Map.put(available_resources, node, updated_node_resources)
 
-          # Return value for Enum.find_value
-          {new_assignments, new_available_resources}
-          # Node cannot satisfy, continue search
+          # Move the chosen node to the front of the list
+          updated_nodes_list = [node | List.delete(nodes, node)]
+
+          # Return value for Enum.find_value: {assignments, resources, updated_nodes}
+          {new_assignments, new_available_resources, updated_nodes_list}
         end
       end)
 
-    if found_node_assignment do
-      # Node was found and resources were updated within Enum.find_value's anonymous function
-      found_node_assignment
+    if found_node_assignment_tuple do
+      # Node was found and resources/nodes list were updated
+      found_node_assignment_tuple
     else
       # If no node has resources, assign to first node (original fallback)
       # and don't alter available_resources for this function assignment.
+      # Move the fallback node to the front of the list.
       assigned_node = List.first(nodes)
-      {Map.put(current_assignments, id, assigned_node), available_resources}
+
+      {Map.put(current_assignments, id, assigned_node), available_resources, nodes}
     end
   end
 
