@@ -92,7 +92,6 @@ defmodule Handoff.ConcurrentExecutionTest do
       })
     end
 
-    # @tag :skip_in_ci # Skip if full cluster setup is problematic in CI
     test "executes two simple DAGs concurrently with data isolation via DistributedExecutor" do
       # Use test PID
       dag_a_id = {self(), 1}

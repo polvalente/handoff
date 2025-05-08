@@ -166,6 +166,47 @@ defmodule Handoff.DistributedExecutorTest do
     end
   end
 
+  test "prioritizes Node.self() for first available allocation", %{node_2: other_node} do
+    self_node = Node.self()
+
+    dag = DAG.new(self())
+
+    dag_with_functions =
+      dag
+      |> DAG.add_function(%Function{
+        id: :task_A,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: ["A"],
+        # Consumes most of self_node's memory if allocated there
+        cost: %{cpu: 1, memory: 1900}
+      })
+      |> DAG.add_function(%Function{
+        id: :task_B,
+        # Independent task
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: ["B"],
+        # Requires more memory than self_node would have left
+        cost: %{cpu: 1, memory: 150}
+      })
+
+    # Explicitly use the :first_available strategy for clarity
+    opts = [allocation_strategy: :first_available]
+
+    assert {:ok, %{allocations: allocations}} =
+             DistributedExecutor.execute(dag_with_functions, opts)
+
+    expected_allocations = %{
+      # Should go to Node.self() due to prioritization
+      task_A: self_node,
+      # Node.self() can't fit this after task_A, so it goes to other_node
+      task_B: other_node
+    }
+
+    assert allocations == expected_allocations
+  end
+
   describe "resource management" do
     test "respects resource limits" do
       dag1_id = {self(), 1}
