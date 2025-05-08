@@ -50,6 +50,9 @@ jobs:
       - name: Run Credo
         run: mix credo --strict
 
+      - name: Start epmd
+        run: epmd -daemon
+
       - name: Run tests
         run: mix test --warnings-as-errors
 
