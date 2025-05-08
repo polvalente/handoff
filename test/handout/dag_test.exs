@@ -20,7 +20,8 @@ defmodule Handoff.DAGTest do
       function = %Function{
         id: :func1,
         args: [],
-        code: fn -> :result1 end
+        code: &Elixir.Function.identity/1,
+        extra_args: [:result1]
       }
 
       updated_dag = DAG.add_function(dag, function)
@@ -37,13 +38,15 @@ defmodule Handoff.DAGTest do
       func1 = %Function{
         id: :func1,
         args: [],
-        code: fn -> :result1 end
+        code: &Elixir.Function.identity/1,
+        extra_args: [:result1]
       }
 
       func2 = %Function{
         id: :func2,
         args: [:func1],
-        code: fn results -> {:used, results[:func1]} end
+        code: &Handoff.DistributedTestFunctions.g/2,
+        extra_args: [:used]
       }
 
       dag =
@@ -60,7 +63,8 @@ defmodule Handoff.DAGTest do
       func = %Function{
         id: :func,
         args: [:some_function],
-        code: fn _ -> :result end
+        code: &Elixir.Function.identity/1,
+        extra_args: [:result]
       }
 
       dag = DAG.add_function(dag, func)
@@ -74,19 +78,22 @@ defmodule Handoff.DAGTest do
       func1 = %Function{
         id: :func1,
         args: [:func3],
-        code: fn _ -> :result1 end
+        code: &Elixir.Function.identity/1,
+        extra_args: [:result1]
       }
 
       func2 = %Function{
         id: :func2,
         args: [:func1],
-        code: fn _ -> :result2 end
+        code: &Handoff.DistributedTestFunctions.g/2,
+        extra_args: [:result2]
       }
 
       func3 = %Function{
         id: :func3,
         args: [:func2],
-        code: fn _ -> :result3 end
+        code: &Elixir.Function.identity/1,
+        extra_args: [:result3]
       }
 
       dag =

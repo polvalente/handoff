@@ -464,10 +464,8 @@ defmodule Handoff.DistributedExecutor do
     else
       {:error, :resources_unavailable} ->
         {:error,
-         %RuntimeError{
-           message:
-             "Resources unavailable for function #{function.id} on node #{function.node} (request by orchestrator)"
-         }}
+         {:allocation_error,
+          "Resources unavailable for function #{function.id} on node #{function.node}"}}
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
@@ -477,10 +475,7 @@ defmodule Handoff.DistributedExecutor do
         execute_function_on_node(dag_id, function, args, max_retries, current_retry + 1)
 
       {:error, reason} ->
-        raise %RuntimeError{
-          message:
-            "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
-        }
+        raise "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
     end
   rescue
     e ->

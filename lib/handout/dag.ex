@@ -101,18 +101,30 @@ defmodule Handoff.DAG do
 
   ## Example
 
-  ```elixir
-  dag =
-    Handoff.DAG.new()
-    |> Handoff.DAG.add_function(%Handoff.Function{
-      id: :source,
-      args: [],
-      code: fn -> :rand.uniform(100) end
-    })
-  ```
+      defmodule MyModule do
+        def random_number() do
+          :rand.uniform(100)
+        end
+      end
+
+      dag =
+        Handoff.DAG.new()
+        |> Handoff.DAG.add_function(%Handoff.Function{
+          id: :source,
+          args: [],
+          code: &MyModule.random_number/0
+        })
   """
   def add_function(dag, %Function{} = function) do
-    put_in(dag.functions[function.id], function)
+    info = Elixir.Function.info(function.code)
+
+    case info[:type] do
+      :external ->
+        put_in(dag.functions[function.id], function)
+
+      _ ->
+        raise ":code must be an fully qualified &Module.function/arity capture, got: #{inspect(function.code)}"
+    end
   end
 
   @doc ~S"""
@@ -126,21 +138,21 @@ defmodule Handoff.DAG do
   ## Example
 
       iex> dag = Handoff.DAG.new()
-      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [], code: fn -> 1 end})
-      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: fn %{a: a} -> a + 1 end})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [], code: &Elixir.Function.identity/1, extra_args: [1]})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: &Map.get/2, extra_args: [:a]})
       iex> Handoff.DAG.validate(dag)
       :ok
 
   ## Error cases
 
       iex> dag = Handoff.DAG.new()
-      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: fn _ -> 1 end})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: &Elixir.Function.identity/1})
       iex> Handoff.DAG.validate(dag)
       {:error, {:missing_function, :b}}
 
       iex> dag = Handoff.DAG.new()
-      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: fn %{b: b} -> b end})
-      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: fn %{a: a} -> a end})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :a, args: [:b], code: &Map.get/2, extra_args: [:b]})
+      iex> dag = Handoff.DAG.add_function(dag, %Handoff.Function{id: :b, args: [:a], code: &Map.get/2, extra_args: [:a]})
       iex> {:error, {:cyclic_dependency, cycle}} = Handoff.DAG.validate(dag)
       iex> Enum.sort(cycle)
       [:a, :b]

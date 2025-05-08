@@ -18,17 +18,20 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :a,
           args: [],
-          code: fn -> 1 end
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
         })
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: fn a -> a + 1 end
+          code: &Kernel.+/2,
+          extra_args: [1]
         })
         |> DAG.add_function(%Function{
           id: :c,
           args: [:b],
-          code: fn b -> b * 2 end
+          code: &Kernel.*/2,
+          extra_args: [2]
         })
 
       assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
@@ -56,22 +59,25 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :a,
           args: [],
-          code: fn -> 5 end
+          code: &Elixir.Function.identity/1,
+          extra_args: [5]
         })
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: fn a -> a + 2 end
+          code: &Kernel.+/2,
+          extra_args: [2]
         })
         |> DAG.add_function(%Function{
           id: :c,
           args: [:a],
-          code: fn a -> a * 2 end
+          code: &Kernel.*/2,
+          extra_args: [2]
         })
         |> DAG.add_function(%Function{
           id: :d,
           args: [:b, :c],
-          code: fn b, c -> b + c end
+          code: &Kernel.+/2,
         })
 
       assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
@@ -92,12 +98,13 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :a,
           args: [],
-          code: fn -> 1 end
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
         })
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: fn a, multiplier -> a * multiplier end,
+          code: &Kernel.*/2,
           extra_args: [10]
         })
 
@@ -117,16 +124,18 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :a,
           args: [],
-          code: fn -> 1 end
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
         })
         |> DAG.add_function(%Function{
           id: :error,
           args: [:a],
-          code: fn _ -> raise "An error occurred" end
+          code: &Handoff.DistributedTestFunctions.raise_error/2,
+          extra_args: ["An error occurred"]
         })
 
       {:error, error_info} = Executor.execute(dag_with_functions)
-      assert match?({%RuntimeError{message: "An error occurred"}, _}, error_info)
+      assert match?({%RuntimeError{message: "An error occurred, value: 1"}, _}, error_info)
     end
 
     test "rejects invalid DAGs" do
@@ -138,12 +147,14 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :a,
           args: [:b],
-          code: fn b -> b + 1 end
+          code: &Kernel.+/2,
+          extra_args: [1]
         })
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: fn a -> a * 2 end
+          code: &Kernel.*/2,
+          extra_args: [2]
         })
 
       assert {:error, {:cyclic_dependency, cycle}} = Executor.execute(dag_with_functions)
