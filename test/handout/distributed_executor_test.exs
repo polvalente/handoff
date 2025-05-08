@@ -60,7 +60,8 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :source,
           args: [],
-          code: fn -> 42 end,
+          code: &Elixir.Function.identity/1,
+          extra_args: [42],
           cost: %{cpu: 1, memory: 1950}
         })
         |> DAG.add_function(%Function{
