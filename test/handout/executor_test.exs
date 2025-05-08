@@ -77,7 +77,7 @@ defmodule Handoff.ExecutorTest do
         |> DAG.add_function(%Function{
           id: :d,
           args: [:b, :c],
-          code: &Kernel.+/2,
+          code: &Kernel.+/2
         })
 
       assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
