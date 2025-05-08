@@ -7,11 +7,11 @@ defmodule Handoff.DistributedExecutor do
 
   use GenServer
 
+  alias Handoff.Allocator.AllocationError
   alias Handoff.DAG
   alias Handoff.DataLocationRegistry
   alias Handoff.ResultStore
   alias Handoff.SimpleResourceTracker
-  alias Handoff.Allocator.AllocationError
 
   require Logger
 

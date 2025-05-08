@@ -22,6 +22,7 @@ defmodule Handoff.Allocator do
             ) :: %{term() => node()}
 
   defmodule AllocationError do
+    @moduledoc false
     defexception [:message]
 
     def exception(message) do

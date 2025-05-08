@@ -10,9 +10,9 @@ defmodule Handoff.SimpleAllocator do
 
   @behaviour Handoff.Allocator
 
+  alias Handoff.Allocator.AllocationError
   alias Handoff.Function
   alias Handoff.SimpleResourceTracker
-  alias Handoff.Allocator.AllocationError
 
   @doc """
   Allocate functions to nodes based on resource requirements and node capabilities.
