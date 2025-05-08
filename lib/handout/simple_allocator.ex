@@ -76,34 +76,61 @@ defmodule Handoff.SimpleAllocator do
         Map.put(acc, node, Map.get(caps, node, %{cpu: 0, memory: 0}))
       end)
 
-    # Process each function and assign to the first available node
-    {assignments, _final_resources, _final_nodes} =
-      Enum.reduce(functions, {%{}, initial_available_resources, nodes}, fn
-        %Function{id: id, cost: cost},
-        {current_assignments, available_resources, current_nodes_list} ->
-          # If function has no resource requirements, assign to the first node by default
-          # and don't alter available resources for this function.
-          # The node list is updated to move the assigned node to the front.
-          if is_nil(cost) || cost == %{} do
-            assigned_node = List.first(current_nodes_list)
+    # Partition functions: those with a pre-defined node and those for dynamic allocation
+    {pinned_functions, dynamic_functions} =
+      Enum.split_with(functions, fn %Function{node: node} -> not is_nil(node) end)
 
-            {Map.put(current_assignments, id, assigned_node), available_resources,
-             current_nodes_list}
-          else
-            # Find first node that can satisfy the cost based on *current* available_resources
-            # and get the updated nodes list
-            find_node_assignment(
-              id,
-              current_assignments,
-              available_resources,
-              cost,
-              # Pass current_nodes_list
-              current_nodes_list
-            )
-          end
-      end)
+    # Process pinned functions first
+    {intermediate_assignments, intermediate_resources} =
+      Enum.reduce(
+        pinned_functions,
+        {%{}, initial_available_resources},
+        fn %Function{id: id, cost: cost, node: assigned_node}, {acc_assignments, acc_resources} ->
+          # Assume assigned_node is valid and its resources are tracked.
+          # If the node is not in caps (and thus not in acc_resources initially),
+          # this might indicate an issue or a node without declared capacity.
+          # For now, we proceed assuming it's a known node.
+          # If cost is nil, treat as no resource requirement for subtraction.
+          actual_cost = cost || %{}
+          node_current_resources = Map.get(acc_resources, assigned_node, %{cpu: 0, memory: 0})
 
-    assignments
+          # For pinned functions, we assign them regardless of can_allocate? outcome,
+          # as pinning implies a directive. Resources are subtracted.
+          updated_node_res = subtract_resources(node_current_resources, actual_cost)
+          new_resources = Map.put(acc_resources, assigned_node, updated_node_res)
+          new_assignments = Map.put(acc_assignments, id, assigned_node)
+          {new_assignments, new_resources}
+        end
+      )
+
+    # Process remaining (dynamic) functions
+    {final_assignments_map, _final_resources, _final_nodes} =
+      Enum.reduce(
+        # Use functions not already pinned
+        dynamic_functions,
+        # Start with results from pinned
+        {intermediate_assignments, intermediate_resources, nodes},
+        fn
+          %Function{id: id, cost: cost},
+          {current_assignments, available_resources, current_nodes_list} ->
+            if is_nil(cost) || cost == %{} do
+              assigned_node = List.first(current_nodes_list)
+
+              {Map.put(current_assignments, id, assigned_node), available_resources,
+               current_nodes_list}
+            else
+              find_node_assignment(
+                id,
+                current_assignments,
+                available_resources,
+                cost,
+                current_nodes_list
+              )
+            end
+        end
+      )
+
+    final_assignments_map
   end
 
   defp find_node_assignment(id, current_assignments, available_resources, cost, nodes) do
