@@ -322,30 +322,7 @@ defmodule Handoff.DistributedExecutor do
         function = Map.get(dag.functions, function_id)
 
         # Check if all dependencies are satisfied
-        all_deps_executed? =
-          Enum.all?(function.args, fn arg_id ->
-            dep_function_def = Map.get(dag.functions, arg_id)
-
-            cond do
-              is_nil(dep_function_def) ->
-                # Initial literal argument
-                true
-
-              dep_function_def.type == :inline ->
-                # Inline dependencies are resolved JIT by the consumer
-                true
-
-              Map.has_key?(executed, arg_id) ->
-                # Regular function dependency's result is available
-                true
-
-              true ->
-                # Dependency not yet satisfied
-                false
-            end
-          end)
-
-        all_deps_executed?
+        all_deps_satisfied?(function, dag, executed)
       end)
 
     # Execute ready functions
@@ -359,7 +336,7 @@ defmodule Handoff.DistributedExecutor do
     # Check for completed functions if there are any pending
     if MapSet.size(new_pending) > 0 do
       # Small delay to avoid tight polling
-      :timer.sleep(100)
+      :timer.sleep(100 + :random.uniform(20))
 
       # Check for completed functions
       {still_pending, newly_executed} =
@@ -408,6 +385,30 @@ defmodule Handoff.DistributedExecutor do
         max_retries
       )
     end
+  end
+
+  defp all_deps_satisfied?(function, dag, executed) do
+    Enum.all?(function.args, fn arg_id ->
+      dep_function_def = Map.get(dag.functions, arg_id)
+
+      cond do
+        is_nil(dep_function_def) ->
+          # Initial literal argument
+          true
+
+        dep_function_def.type == :inline ->
+          # Inline dependencies are resolved JIT by the consumer
+          true
+
+        Map.has_key?(executed, arg_id) ->
+          # Regular function dependency's result is available
+          true
+
+        true ->
+          # Dependency not yet satisfied
+          false
+      end
+    end)
   end
 
   defp execute_ready_function(
@@ -710,7 +711,7 @@ defmodule Handoff.DistributedExecutor do
         result
 
       true ->
-        # Argument is an initial input (literal) or a regular function not yet in executed_results.
+        # Argument is an initial input (literal) or a regular function not yet in executed_results
         # For initial inputs, get_with_fetch will return it.
         # For regular functions, if it's not in executed_results, it implies an issue
         # unless it's an initial value not part of dag.functions.
