@@ -70,7 +70,7 @@ defmodule Handoff.DistributedExecutorTest do
           args: [:source],
           code: &Handoff.DistributedTestFunctions.g/2,
           extra_args: [1337],
-          cost: %{cpu: 1, memory: 100}
+          cost: %{cpu: 1, memory: 2000}
         })
         |> DAG.add_function(%Function{
           id: :final,
