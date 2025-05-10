@@ -5,7 +5,7 @@ defmodule Handoff.ConcurrentExecutionTest do
 
   alias Handoff.DAG
   alias Handoff.DataLocationRegistry
-  alias Handoff.Executor
+  alias Handoff.DistributedExecutor
   alias Handoff.Function
   alias Handoff.ResultStore
 
@@ -26,7 +26,7 @@ defmodule Handoff.ConcurrentExecutionTest do
     })
   end
 
-  describe "Concurrent Local DAG Execution (Handoff.Executor)" do
+  describe "Concurrent Local DAG Execution (Handoff.DistributedExecutor)" do
     test "executes two simple DAGs concurrently with data isolation" do
       dag_id_1 = {self(), 1}
       dag_id_2 = {self(), 2}
@@ -34,11 +34,16 @@ defmodule Handoff.ConcurrentExecutionTest do
       dag1 = create_simple_dag(dag_id_1, "dag1")
       dag2 = create_simple_dag(dag_id_2, "dag2")
 
-      # Execute DAGs. GenServer calls to Executor are synchronous,
-      # so true parallelism isn't tested here, but data isolation is.
-      # For true parallelism, tasks/async would be needed if Executor.execute was async itself.
-      {:ok, res1} = Executor.execute(dag1)
-      {:ok, res2} = Executor.execute(dag2)
+      # Execute DAGs. DistributedExecutor.execute is internally async (spawns a Task).
+      # The GenServer call to DistributedExecutor itself is synchronous, returning :noreply quickly.
+      # The actual result is obtained by awaiting the task implicitly handled by the test if we got {:ok, res}.
+      # However, to ensure these start and potentially interleave, we can Task.async them here too.
+
+      task1 = Task.async(fn -> DistributedExecutor.execute(dag1) end)
+      task2 = Task.async(fn -> DistributedExecutor.execute(dag2) end)
+
+      {:ok, res1} = Task.await(task1, 15000)
+      {:ok, res2} = Task.await(task2, 15000)
 
       # Check DAG 1 results and ID
       assert res1.dag_id == dag_id_1
@@ -109,8 +114,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       dag_a = create_dist_dag(dag_a_id, "dagA", node_self)
       dag_b = create_dist_dag(dag_b_id, "dagB", node_self)
 
-      task_a = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_a, []) end)
-      task_b = Task.async(fn -> Handoff.DistributedExecutor.execute(dag_b, []) end)
+      task_a = Task.async(fn -> DistributedExecutor.execute(dag_a, []) end)
+      task_b = Task.async(fn -> DistributedExecutor.execute(dag_b, []) end)
 
       res_a = Task.await(task_a, 15_000)
       res_b = Task.await(task_b, 15_000)

@@ -36,8 +36,8 @@ defmodule Handoff do
   - {:error, reason} on failure
   """
   def execute(dag, opts \\ []) do
-    # Use the local executor by default
-    Handoff.Executor.execute(dag, opts)
+    # Use DistributedExecutor, which handles local execution if no other nodes are present.
+    Handoff.DistributedExecutor.execute(dag, opts)
   end
 
   @doc """
@@ -55,6 +55,30 @@ defmodule Handoff do
   - {:error, reason} on failure
   """
   def execute_distributed(dag, opts \\ []) do
+    Handoff.DistributedExecutor.execute(dag, opts)
+  end
+
+  @doc """
+  Executes all functions in a DAG strictly on the local node, bypassing resource allocation
+  and ensuring all functions have `node` set to `Node.self()` and `cost` set to `nil`.
+
+  This is useful for ensuring local execution regardless of global configuration or function definitions.
+
+  ## Parameters
+  - dag: The DAG to execute
+  - opts: Optional execution settings (passed to `Handoff.DistributedExecutor`)
+
+  ## Returns
+  - Same as `Handoff.execute/2`.
+  """
+  def execute_local(dag, opts \\ []) do
+    # TODO: use simpler topo-sort + reduce strategy for executing the graph locally.
+    dag =
+      update_in(dag, [Access.key(:functions), Access.all()], fn {id, func} ->
+        modified_func = %{func | node: Node.self(), cost: nil}
+        {id, modified_func}
+      end)
+
     Handoff.DistributedExecutor.execute(dag, opts)
   end
 

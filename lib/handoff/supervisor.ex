@@ -19,7 +19,6 @@ defmodule Handoff.Supervisor do
       {Handoff.ResultStore, []},
       {Handoff.SimpleResourceTracker, []},
       {Handoff.DataLocationRegistry, []},
-      {Handoff.Executor, []},
       {Handoff.DistributedExecutor, opts},
       {Handoff.DistributedResultStore, []}
     ]
