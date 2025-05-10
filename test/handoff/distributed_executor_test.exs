@@ -4,6 +4,7 @@ defmodule Handoff.DistributedExecutorTest do
   alias Handoff.DAG
   alias Handoff.DistributedExecutor
   alias Handoff.Function
+  alias Handoff.Function.Argument
   alias Handoff.SimpleResourceTracker
 
   setup do
@@ -394,7 +395,7 @@ defmodule Handoff.DistributedExecutorTest do
       consumer = %Handoff.Function{
         id: :consumer,
         args: [
-          %Handoff.Function.Argument{
+          %Argument{
             id: :producer,
             serialization_fn: {Handoff.DistributedTestFunctions, :serialize, []},
             deserialization_fn: {Handoff.DistributedTestFunctions, :deserialize, []}
@@ -438,7 +439,7 @@ defmodule Handoff.DistributedExecutorTest do
       consumer = %Handoff.Function{
         id: :consumer,
         args: [
-          %Handoff.Function.Argument{
+          %Argument{
             id: :producer,
             serialization_fn: {Handoff.DistributedTestFunctions, :elem_with_nodes, [1]},
             deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
@@ -486,7 +487,7 @@ defmodule Handoff.DistributedExecutorTest do
       consumer = %Handoff.Function{
         id: :consumer,
         args: [
-          %Handoff.Function.Argument{
+          %Argument{
             id: :producer,
             serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
             deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
@@ -518,7 +519,7 @@ defmodule Handoff.DistributedExecutorTest do
     consumer = %Handoff.Function{
       id: :consumer,
       args: [
-        %Handoff.Function.Argument{
+        %Argument{
           id: :producer,
           serialization_fn: {Handoff.DistributedTestFunctions, :serialize, []},
           deserialization_fn: {Handoff.DistributedTestFunctions, :deserialize, []}

@@ -3,6 +3,7 @@ defmodule Handoff.DAGTest do
 
   alias Handoff.DAG
   alias Handoff.Function
+  alias Handoff.Function.Argument
 
   doctest Handoff.DAG
 
@@ -121,7 +122,7 @@ defmodule Handoff.DAGTest do
       consumer = %Handoff.Function{
         id: :consumer,
         args: [
-          %Handoff.Function.Argument{
+          %Argument{
             id: :producer,
             serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
             deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
@@ -140,7 +141,8 @@ defmodule Handoff.DAGTest do
 
       assert Map.has_key?(
                dag.functions,
-               {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:deserialize, :producer, :consumer,
+                {Handoff.InternalOps, :identity_with_nodes, []}}
              )
     end
 
@@ -157,7 +159,7 @@ defmodule Handoff.DAGTest do
       consumer = %Handoff.Function{
         id: :consumer,
         args: [
-          %Handoff.Function.Argument{
+          %Argument{
             id: :producer,
             serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
             deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
@@ -177,7 +179,8 @@ defmodule Handoff.DAGTest do
 
       assert Map.has_key?(
                dag.functions,
-               {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:deserialize, :producer, :consumer,
+                {Handoff.InternalOps, :identity_with_nodes, []}}
              )
     end
   end

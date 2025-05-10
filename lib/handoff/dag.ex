@@ -128,60 +128,64 @@ defmodule Handoff.DAG do
 
     # Expand Handoff.Function.Argument in args into synthetic nodes
     {dag, new_args} =
-      Enum.reduce(function.args, {dag, []}, fn arg, {dag_acc, args_acc} ->
-        case arg do
-          %Handoff.Function.Argument{} = arg_spec ->
-            original_producer_id = arg_spec.id
-            consuming_function_id = function.id
-
-            # 1. Serialization node
-            {mod, fun, extra_args} =
-              ser_mfa =
-              arg_spec.serialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
-
-            serializer_node_id = {:serialize, original_producer_id, consuming_function_id, ser_mfa}
-
-            serializer_fn = %Function{
-              id: serializer_node_id,
-              args: [original_producer_id],
-              code: {mod, fun},
-              extra_args: extra_args,
-              type: :regular,
-              node: {:collocated, original_producer_id},
-              cost: nil
-            }
-
-            dag_acc = add_function(dag_acc, serializer_fn)
-
-            # 2. Deserialization node
-            {mod, fun, extra_args} =
-              deser_mfa =
-              arg_spec.deserialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
-
-            deserializer_node_id = {:deserialize, original_producer_id, consuming_function_id, deser_mfa}
-
-            deserializer_fn = %Function{
-              id: deserializer_node_id,
-              args: [serializer_node_id],
-              code: {mod, fun},
-              extra_args: extra_args,
-              type: :regular,
-              node: {:collocated, consuming_function_id},
-              cost: nil
-            }
-
-            dag_acc = add_function(dag_acc, deserializer_fn)
-
-            {dag_acc, [deserializer_node_id | args_acc]}
-
-          _ ->
-            {dag_acc, [arg | args_acc]}
-        end
-      end)
+      Enum.reduce(function.args, {dag, []}, &expand_argument_nodes(&1, &2, function))
 
     # Replace args with rewritten args
     function = %{function | args: Enum.reverse(new_args)}
     put_in(dag.functions[function.id], function)
+  end
+
+  defp expand_argument_nodes(arg, {dag_acc, args_acc}, function) do
+    case arg do
+      %Handoff.Function.Argument{} = arg_spec ->
+        original_producer_id = arg_spec.id
+        consuming_function_id = function.id
+
+        # 1. Serialization node
+        {mod, fun, extra_args} =
+          ser_mfa =
+          arg_spec.serialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
+
+        serializer_node_id =
+          {:serialize, original_producer_id, consuming_function_id, ser_mfa}
+
+        serializer_fn = %Function{
+          id: serializer_node_id,
+          args: [original_producer_id],
+          code: {mod, fun},
+          extra_args: extra_args,
+          type: :regular,
+          node: {:collocated, original_producer_id},
+          cost: nil
+        }
+
+        dag_acc = add_function(dag_acc, serializer_fn)
+
+        # 2. Deserialization node
+        {mod, fun, extra_args} =
+          deser_mfa =
+          arg_spec.deserialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
+
+        deserializer_node_id =
+          {:deserialize, original_producer_id, consuming_function_id, deser_mfa}
+
+        deserializer_fn = %Function{
+          id: deserializer_node_id,
+          args: [serializer_node_id],
+          code: {mod, fun},
+          extra_args: extra_args,
+          type: :regular,
+          node: {:collocated, consuming_function_id},
+          cost: nil
+        }
+
+        dag_acc = add_function(dag_acc, deserializer_fn)
+
+        {dag_acc, [deserializer_node_id | args_acc]}
+
+      _ ->
+        {dag_acc, [arg | args_acc]}
+    end
   end
 
   @doc ~S"""
