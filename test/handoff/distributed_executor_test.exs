@@ -407,6 +407,19 @@ defmodule Handoff.DistributedExecutorTest do
       dag = Handoff.DAG.add_function(dag, consumer)
 
       assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
+
+      # same node serde should not be serialized as per the function's implementation
+      assert results[
+               {:serialize, :producer, :consumer,
+                {Handoff.DistributedTestFunctions, :serialize, []}}
+             ] == [1, 2]
+
+      assert results[
+               {:deserialize, :producer, :consumer,
+                {Handoff.DistributedTestFunctions, :deserialize, []}}
+             ] ==
+               [1, 2]
+
       assert results[:producer] == [1, 2]
       assert results[:consumer] == [1, 2]
     end
@@ -473,15 +486,20 @@ defmodule Handoff.DistributedExecutorTest do
              Handoff.DistributedExecutor.execute(dag)
 
     assert allocations == %{
-      :producer => Node.self(),
-      :consumer => node_2,
-      {:serialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :serialize, []}} => Node.self(),
-      {:deserialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :deserialize, []}} => node_2
-    }
+             :producer => Node.self(),
+             :consumer => node_2,
+             {:serialize, :producer, :consumer,
+              {Handoff.DistributedTestFunctions, :serialize, []}} => Node.self(),
+             {:deserialize, :producer, :consumer,
+              {Handoff.DistributedTestFunctions, :deserialize, []}} => node_2
+           }
 
     assert results[:producer] == [1, 2]
 
-    assert results[{:serialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :serialize, []}}] ==
+    assert results[
+             {:serialize, :producer, :consumer,
+              {Handoff.DistributedTestFunctions, :serialize, []}}
+           ] ==
              :erlang.term_to_binary([1, 2])
 
     {:ok, deserialized_result} =

@@ -135,12 +135,12 @@ defmodule Handoff.DAGTest do
 
       assert Map.has_key?(
                dag.functions,
-               {:serialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:serialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
              )
 
       assert Map.has_key?(
                dag.functions,
-               {:deserialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
              )
     end
 
@@ -172,12 +172,12 @@ defmodule Handoff.DAGTest do
 
       assert Map.has_key?(
                dag.functions,
-               {:serialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:serialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
              )
 
       assert Map.has_key?(
                dag.functions,
-               {:deserialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
              )
     end
   end
