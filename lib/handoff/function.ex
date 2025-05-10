@@ -22,22 +22,29 @@ defmodule Handoff.Function do
   %Handoff.Function{
     id: :generate_data,
     args: [],
-    code: fn -> Enum.random(1..100) end
+    code: &Enum.random/1,
+    extra_args: [1..100]
   }
 
-  # A function that depends on another function's result
+  # A function that depends on another function's result.
+  # The result of :generate_data (e.g., an integer) will be passed as the first argument
+  # to &*/2. The second argument for the multiplication (2) comes from extra_args.
   %Handoff.Function{
     id: :process_data,
     args: [:generate_data],
-    code: fn %{generate_data: value} -> value * 2 end
+    code: &*/2,
+    extra_args: [2]
+    # If :generate_data produces X, this executes X * 2.
   }
 
-  # A function with resource requirements for distributed execution
+  # A function with resource requirements for distributed execution.
+  # The result of :process_data will be passed as the first argument to IO.inspect/2.
   %Handoff.Function{
-    id: :heavy_computation,
+    id: :inspect_result, # Renamed for clarity with IO.inspect
     args: [:process_data],
-    code: fn %{process_data: value} -> complex_algorithm(value) end,
-    cost: %{cpu: 4, memory: 8000}
+    code: &IO.inspect/2,
+    extra_args: [label: "Inspect result"],
+    cost: %{cpu: 1, memory: 500} # Adjusted cost for a simple inspect
   }
   ```
 
