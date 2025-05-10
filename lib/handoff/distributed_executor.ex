@@ -551,6 +551,12 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp execute_local(function, args, all_dag_functions) do
+    args =
+      case function.argument_inclusion do
+        :variadic -> args
+        :as_list -> [args]
+      end
+
     case function.id do
       {:serialize, producer_id, consumer_id, _args} ->
         # For serializer, source_node is producer's node, target_node is consumer's node

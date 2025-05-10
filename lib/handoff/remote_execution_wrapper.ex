@@ -29,6 +29,12 @@ defmodule Handoff.RemoteExecutionWrapper do
       # 1. Fetch arguments, handling inlines locally on this worker node.
       resolved_args = fetch_arguments(dag_id, arg_ids, orchestrator, all_dag_functions)
 
+      resolved_args =
+        case function_struct.argument_inclusion do
+          :variadic -> resolved_args
+          :as_list -> [resolved_args]
+        end
+
       # 2. Execute the function code
       actual_result =
         case function_struct.id do
