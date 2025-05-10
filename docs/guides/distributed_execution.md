@@ -123,7 +123,7 @@ Handoff provides telemetry events for monitoring distributed execution:
   "handoff-monitoring",
   [:handoff, :execution, :function, :start],
   fn name, measurements, metadata, _config ->
-    IO.puts("Function #{metadata.function_id} started on node #{metadata.node}")
+    IO.puts("Function #{inspect(metadata.function_id)} started on node #{metadata.node}")
     IO.puts("Measurements: #{inspect(measurements)}")
   end,
   nil

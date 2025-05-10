@@ -31,7 +31,36 @@ defmodule Handoff.RemoteExecutionWrapper do
 
       # 2. Execute the function code
       actual_result =
-        Kernel.apply(function_struct.code, resolved_args ++ function_struct.extra_args)
+        case function_struct.id do
+          {:serialize, producer_id, consumer_id, _args} ->
+            producer_function = Map.fetch!(all_dag_functions, producer_id)
+            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+            source_node = producer_function.node
+            target_node = consumer_function.node
+
+            apply_code(
+              function_struct.code,
+              resolved_args ++
+                [source_node, target_node] ++
+                function_struct.extra_args
+            )
+
+          {:deserialize, producer_id, consumer_id, _args} ->
+            producer_function = Map.fetch!(all_dag_functions, producer_id)
+            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+            source_node = producer_function.node
+            target_node = consumer_function.node
+
+            apply_code(
+              function_struct.code,
+              resolved_args ++
+                [source_node, target_node] ++
+                function_struct.extra_args
+            )
+
+          _ ->
+            apply_code(function_struct.code, resolved_args ++ function_struct.extra_args)
+        end
 
       # 3. Store result in this node's local ResultStore
       case ResultStore.store(dag_id, function_struct.id, actual_result) do
@@ -108,7 +137,7 @@ defmodule Handoff.RemoteExecutionWrapper do
       )
 
     # Execute the inline function
-    apply(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
+    apply_code(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
   end
 
   # Helper: fetch an argument via the orchestrator
@@ -150,5 +179,13 @@ defmodule Handoff.RemoteExecutionWrapper do
           raise "RPC error fetching #{inspect(arg_id)} for DAG #{inspect(dag_id)} from node #{inspect(source_node)}: #{inspect(reason)}"
       end
     end
+  end
+
+  defp apply_code(function, args) when is_function(function) do
+    apply(function, args)
+  end
+
+  defp apply_code({module, function}, args) do
+    apply(module, function, args)
   end
 end

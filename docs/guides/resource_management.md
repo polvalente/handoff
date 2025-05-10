@@ -159,7 +159,7 @@ Handoff provides telemetry events for monitoring resource usage:
     node = metadata.node
     allocated = measurements.allocated
 
-    IO.puts("Function #{function_id} allocated #{inspect(allocated)} on node #{node}")
+    IO.puts("Function #{inspect(function_id)} allocated #{inspect(allocated)} on node #{node}")
   end,
   nil
 )
