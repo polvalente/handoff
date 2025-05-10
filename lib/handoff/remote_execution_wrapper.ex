@@ -32,9 +32,11 @@ defmodule Handoff.RemoteExecutionWrapper do
       # 2. Execute the function code
       actual_result =
         case function_struct.id do
-          {:serialize, _, _} ->
-            source_node = Node.self()
-            target_node = function_struct.node
+          {:serialize, producer_id, consumer_id, _args} ->
+            producer_function = Map.fetch!(all_dag_functions, producer_id)
+            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+            source_node = producer_function.node
+            target_node = consumer_function.node
 
             apply_code(
               function_struct.code,
@@ -43,10 +45,11 @@ defmodule Handoff.RemoteExecutionWrapper do
                 function_struct.extra_args
             )
 
-          {:deserialize, _, _} ->
-            # For deserializer, source_node is producer's node, target_node is current node
-            source_node = function_struct.node
-            target_node = Node.self()
+          {:deserialize, producer_id, consumer_id, _args} ->
+            producer_function = Map.fetch!(all_dag_functions, producer_id)
+            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+            source_node = producer_function.node
+            target_node = consumer_function.node
 
             apply_code(
               function_struct.code,

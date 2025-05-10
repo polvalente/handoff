@@ -139,7 +139,7 @@ defmodule Handoff.DAG do
               ser_mfa =
               arg_spec.serialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
 
-            serializer_node_id = {:serialize, original_producer_id, ser_mfa}
+            serializer_node_id = {:serialize, original_producer_id, consuming_function_id, ser_mfa}
 
             serializer_fn = %Function{
               id: serializer_node_id,
@@ -158,7 +158,7 @@ defmodule Handoff.DAG do
               deser_mfa =
               arg_spec.deserialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
 
-            deserializer_node_id = {:deserialize, original_producer_id, deser_mfa}
+            deserializer_node_id = {:deserialize, original_producer_id, consuming_function_id, deser_mfa}
 
             deserializer_fn = %Function{
               id: deserializer_node_id,

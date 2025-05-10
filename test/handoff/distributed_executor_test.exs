@@ -441,4 +441,63 @@ defmodule Handoff.DistributedExecutorTest do
       assert results[:consumer] == 1
     end
   end
+
+  test "serializes when nodes are different", %{node_2: node_2} do
+    dag = Handoff.DAG.new()
+
+    producer = %Handoff.Function{
+      id: :producer,
+      args: [],
+      code: &Elixir.Function.identity/1,
+      extra_args: [[1, 2]],
+      node: Node.self()
+    }
+
+    consumer = %Handoff.Function{
+      id: :consumer,
+      args: [
+        %Handoff.Function.Argument{
+          id: :producer,
+          serialization_fn: {Handoff.DistributedTestFunctions, :serialize, []},
+          deserialization_fn: {Handoff.DistributedTestFunctions, :deserialize, []}
+        }
+      ],
+      code: &Elixir.Function.identity/1,
+      node: node_2
+    }
+
+    dag = Handoff.DAG.add_function(dag, producer)
+    dag = Handoff.DAG.add_function(dag, consumer)
+
+    assert {:ok, %{results: results, allocations: allocations}} =
+             Handoff.DistributedExecutor.execute(dag)
+
+    assert allocations == %{
+      :producer => Node.self(),
+      :consumer => node_2,
+      {:serialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :serialize, []}} => Node.self(),
+      {:deserialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :deserialize, []}} => node_2
+    }
+
+    assert results[:producer] == [1, 2]
+
+    assert results[{:serialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :serialize, []}}] ==
+             :erlang.term_to_binary([1, 2])
+
+    {:ok, deserialized_result} =
+      :rpc.call(node_2, Handoff.ResultStore, :get, [
+        dag.id,
+        {:deserialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :deserialize, []}}
+      ])
+
+    assert deserialized_result == [1, 2]
+
+    assert Map.get(results, :consumer) == :remote_executed_and_registered
+
+    # We need to fetch the remote result directly
+    {:ok, consumer_result} =
+      :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :consumer])
+
+    assert consumer_result == [1, 2]
+  end
 end

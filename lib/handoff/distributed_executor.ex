@@ -558,29 +558,33 @@ defmodule Handoff.DistributedExecutor do
   defp execute_with_node_type(dag_id, function, args, all_dag_functions) do
     # Local execution (node is self or nil)
     if !function.node || function.node == Node.self() do
-      execute_local(function, args)
+      execute_local(function, args, all_dag_functions)
     else
       # Remote execution
       execute_remote(dag_id, function, args, all_dag_functions)
     end
   end
 
-  defp execute_local(function, args) do
+  defp execute_local(function, args, all_dag_functions) do
     case function.id do
-      {:serialize, _original_producer_id, _} ->
-        # For serializer, source_node is current node, target_node is consumer's node
-        source_node = Node.self()
-        target_node = function.node
+      {:serialize, producer_id, consumer_id, _args} ->
+        # For serializer, source_node is producer's node, target_node is consumer's node
+        producer_function = Map.fetch!(all_dag_functions, producer_id)
+        consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+        source_node = producer_function.node
+        target_node = consumer_function.node
 
         result =
           apply_code(function.code, args ++ [source_node, target_node] ++ function.extra_args)
 
         {:ok, result}
 
-      {:deserialize, _original_producer_id, _} ->
-        # For deserializer, source_node is producer's node, target_node is current node
-        source_node = function.node
-        target_node = Node.self()
+      {:deserialize, producer_id, consumer_id, _args} ->
+        # For deserializer, source_node is producer's node, target_node is consumer's node
+        producer_function = Map.fetch!(all_dag_functions, producer_id)
+        consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+        source_node = producer_function.node
+        target_node = consumer_function.node
 
         result =
           apply_code(function.code, args ++ [source_node, target_node] ++ function.extra_args)
