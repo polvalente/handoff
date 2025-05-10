@@ -10,7 +10,7 @@ First, let's set up the environment:
 
 ```elixir
 Mix.install([
-  {:handoff, path: Path.join(__DIR__, ".."},
+  {:handoff, path: Path.join(__DIR__, "..")},
   {:image, "~> 0.14"} # For actual image processing
 ])
 ```
@@ -215,35 +215,102 @@ defmodule DistributedImageProcessing do
   Example of distributed image processing using Handoff.
   """
 
-  alias Handoff.Function
+  alias Handoff.{Function, DAG, DistributedExecutor}
+  require Logger
+
+  # Task implementation for loading images
+  def load_images_task(image_paths) do
+    IO.puts("Loading #{length(image_paths)} images...")
+    # In a real scenario, ensure paths are accessible by the executing node
+    image_paths |> Enum.map(&{&1, ImageTransformations.load_image(&1)}) |> Enum.into(%{})
+  end
+
+  # Task implementation for resizing images
+  def resize_images_task(images_map, width, height) do
+    IO.puts("Resizing images to #{width}x#{height}...")
+    images_map |> Map.new(fn {path, img} ->
+      {path, ImageTransformations.resize_image(img, width, height)}
+    end)
+  end
+
+  # Task implementation for applying a single image transformation to all images in a map
+  def apply_image_effect_task(images_map, effect_name, transformation_fun) do
+    IO.puts("Applying #{effect_name} effect...")
+    images_map |> Map.new(fn {path, img} -> {path, transformation_fun.(img)} end)
+  end
+
+  def apply_image_effect_task(images_map, effect_name, transformation_fun, extra_fun_arg) do
+    IO.puts("Applying #{effect_name} effect with arg #{extra_fun_arg}...")
+    images_map |> Map.new(fn {path, img} -> {path, transformation_fun.(img, extra_fun_arg)} end)
+  end
+
+  # Task implementation for quality assessment
+  def quality_assessment_task(grayscale_results, sepia_results, blur_results, edge_results) do
+    IO.puts("Assessing image quality across effects...")
+    all_effects = %{
+      grayscale: grayscale_results,
+      sepia: sepia_results,
+      blur: blur_results,
+      edge: edge_results
+    }
+    all_effects
+    |> Enum.flat_map(fn {effect, images} ->
+      images |> Enum.map(fn {path, img} ->
+        {"#{effect}_#{Path.basename(path)}", ImageTransformations.assess_quality(img)}
+      end)
+    end)
+    |> Enum.into(%{})
+  end
+
+  # Task implementation for creating a collage
+  def create_collage_task(grayscale_imgs, sepia_imgs, blur_imgs, edge_imgs, collage_opts) do
+    IO.puts("Creating collage from all effects...")
+    all_images =
+      Map.values(grayscale_imgs)
+      |> Enum.concat(Map.values(sepia_imgs))
+      |> Enum.concat(Map.values(blur_imgs))
+      |> Enum.concat(Map.values(edge_imgs))
+    ImageTransformations.create_collage(all_images, collage_opts)
+  end
+
+  # Task implementation for saving multiple images
+  def save_images_task(images_map, output_prefix) do
+    IO.puts("Saving images with prefix '#{output_prefix}'...")
+    images_map |> Map.new(fn {path, img} ->
+      output_path = "output/#{output_prefix}_#{Path.basename(path)}" # Ensure 'output' dir exists or handle errors
+      {path, ImageTransformations.save_image(img, output_path)}
+    end)
+  end
+
+  # Task implementation for saving a single image (like a collage)
+  def save_single_image_task(image_data, base_filename) do
+    IO.puts("Saving final image as '#{base_filename}'...")
+    # Ensure 'output' dir exists or handle errors. Appending timestamp to avoid overwrites.
+    output_path = "output/#{base_filename}_#{DateTime.utc_now() |> DateTime.to_unix()}.jpg"
+    ImageTransformations.save_image(image_data, output_path)
+  end
 
   @doc """
   Build the image processing pipeline DAG.
   """
   def build_pipeline(image_paths) do
-    dag = Handoff.new()
+    dag = DAG.new(:distributed_img_proc_dag) # Give the DAG an ID
 
     # 1. Load images function
     load_images_fn = %Function{
       id: :load_images,
       args: [],
-      code: fn ->
-        IO.puts("Loading #{length(image_paths)} images...")
-        image_paths |> Enum.map(&{&1, ImageTransformations.load_image(&1)}) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.load_images_task/1,
+      extra_args: [image_paths], # Pass image_paths explicitly
       cost: %{cpu: 1, memory: 500}  # Light CPU, moderate memory
     }
 
     # 2. Resize images function
     resize_fn = %Function{
       id: :resize_images,
-      args: [:load_images],
-      code: fn %{load_images: images} ->
-        IO.puts("Resizing images...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.resize_image(img, 800, 600)}
-        end) |> Enum.into(%{})
-      end,
+      args: [:load_images], # Result is images_map
+      code: &DistributedImageProcessing.resize_images_task/3,
+      extra_args: [800, 600], # width, height
       cost: %{cpu: 2, memory: 1000}  # Moderate CPU
     }
 
@@ -251,12 +318,8 @@ defmodule DistributedImageProcessing do
     grayscale_fn = %Function{
       id: :grayscale_effect,
       args: [:resize_images],
-      code: fn %{resize_images: images} ->
-        IO.puts("Applying grayscale effect...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.grayscale(img)}
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.apply_image_effect_task/3,
+      extra_args: [:grayscale, &ImageTransformations.grayscale/1],
       cost: %{cpu: 2, memory: 800}  # Moderate CPU
     }
 
@@ -264,12 +327,8 @@ defmodule DistributedImageProcessing do
     sepia_fn = %Function{
       id: :sepia_effect,
       args: [:resize_images],
-      code: fn %{resize_images: images} ->
-        IO.puts("Applying sepia effect...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.sepia(img)}
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.apply_image_effect_task/3,
+      extra_args: [:sepia, &ImageTransformations.sepia/1],
       cost: %{cpu: 2, memory: 800}  # Moderate CPU
     }
 
@@ -277,12 +336,8 @@ defmodule DistributedImageProcessing do
     blur_fn = %Function{
       id: :blur_effect,
       args: [:resize_images],
-      code: fn %{resize_images: images} ->
-        IO.puts("Applying blur effect...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.blur_image(img)}
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.apply_image_effect_task/4, # Using 4-arity version for blur radius
+      extra_args: [:blur, &ImageTransformations.blur_image/2, 5], # effect_name, fun, radius
       cost: %{cpu: 3, memory: 1200}  # Higher CPU, more memory
     }
 
@@ -290,12 +345,8 @@ defmodule DistributedImageProcessing do
     edge_fn = %Function{
       id: :edge_detection,
       args: [:resize_images],
-      code: fn %{resize_images: images} ->
-        IO.puts("Applying edge detection...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.edge_detection(img)}
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.apply_image_effect_task/3,
+      extra_args: [:edge_detection, &ImageTransformations.edge_detection/1],
       cost: %{cpu: 2, memory: 1500, gpu: 1}  # Needs GPU
     }
 
@@ -303,12 +354,8 @@ defmodule DistributedImageProcessing do
     thumbnail_fn = %Function{
       id: :create_thumbnails,
       args: [:resize_images],
-      code: fn %{resize_images: images} ->
-        IO.puts("Creating thumbnails...")
-        images |> Enum.map(fn {path, img} ->
-          {path, ImageTransformations.create_thumbnail(img)}
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.apply_image_effect_task/4, # Using 4-arity for thumbnail size
+      extra_args: [:thumbnail, &ImageTransformations.create_thumbnail/2, 150], # effect_name, fun, size
       cost: %{cpu: 1, memory: 500}  # Light work
     }
 
@@ -316,24 +363,8 @@ defmodule DistributedImageProcessing do
     quality_assessment_fn = %Function{
       id: :quality_report,
       args: [:grayscale_effect, :sepia_effect, :blur_effect, :edge_detection],
-      code: fn results ->
-        IO.puts("Assessing image quality across effects...")
-
-        # Combine all effect results
-        all_effects = %{
-          grayscale: results.grayscale_effect,
-          sepia: results.sepia_effect,
-          blur: results.blur_effect,
-          edge: results.edge_detection
-        }
-
-        # Assess quality for each effect and image
-        all_effects |> Enum.flat_map(fn {effect, images} ->
-          images |> Enum.map(fn {path, img} ->
-            {"#{effect}_#{Path.basename(path)}", ImageTransformations.assess_quality(img)}
-          end)
-        end) |> Enum.into(%{})
-      end,
+      code: &DistributedImageProcessing.quality_assessment_task/4,
+      # extra_args: [], # No extra_args beyond dependencies
       cost: %{cpu: 4, memory: 2000}  # CPU intensive analysis
     }
 
@@ -341,129 +372,124 @@ defmodule DistributedImageProcessing do
     collage_fn = %Function{
       id: :create_collage,
       args: [:grayscale_effect, :sepia_effect, :blur_effect, :edge_detection],
-      code: fn results ->
-        IO.puts("Creating collage from all effects...")
-
-        # Extract all images from different effects
-        all_images =
-          results.grayscale_effect |> Map.values() |>
-          Enum.concat(Map.values(results.sepia_effect)) |>
-          Enum.concat(Map.values(results.blur_effect)) |>
-          Enum.concat(Map.values(results.edge_detection))
-
-        # Create the collage
-        ImageTransformations.create_collage(all_images, width: 1600, height: 1200)
-      end,
+      code: &DistributedImageProcessing.create_collage_task/5,
+      extra_args: [[width: 1600, height: 1200]], # collage_opts passed as last arg
       cost: %{cpu: 4, memory: 4000}  # Heavy CPU and memory
     }
 
     # 7. Save thumbnails
     save_thumbnails_fn = %Function{
       id: :save_thumbnails,
-      args: [:create_thumbnails],
-      code: fn %{create_thumbnails: thumbnails} ->
-        IO.puts("Saving thumbnails...")
-        thumbnails |> Enum.map(fn {path, img} ->
-          output_path = "output/thumb_#{Path.basename(path)}"
-          {path, ImageTransformations.save_image(img, output_path)}
-        end) |> Enum.into(%{})
-      end,
+      args: [:create_thumbnails], # Result is a map of {path, thumbnail_img_data}
+      code: &DistributedImageProcessing.save_images_task/2,
+      extra_args: ["thumb"], # output_prefix
       cost: %{cpu: 1, memory: 500}  # I/O bound
     }
 
     # 8. Save collage
     save_collage_fn = %Function{
       id: :save_collage,
-      args: [:create_collage],
-      code: fn %{create_collage: collage} ->
-        IO.puts("Saving final collage...")
-        output_path = "output/collage_#{DateTime.utc_now() |> DateTime.to_unix()}.jpg"
-        ImageTransformations.save_image(collage, output_path)
-      end,
+      args: [:create_collage], # Result is the collage image data
+      code: &DistributedImageProcessing.save_single_image_task/2,
+      extra_args: ["final_collage"], # base_filename
       cost: %{cpu: 1, memory: 500}  # I/O bound
     }
 
     # Build the DAG
     dag
-    |> Handoff.DAG.add_function(load_images_fn)
-    |> Handoff.DAG.add_function(resize_fn)
-    |> Handoff.DAG.add_function(grayscale_fn)
-    |> Handoff.DAG.add_function(sepia_fn)
-    |> Handoff.DAG.add_function(blur_fn)
-    |> Handoff.DAG.add_function(edge_fn)
-    |> Handoff.DAG.add_function(thumbnail_fn)
-    |> Handoff.DAG.add_function(quality_assessment_fn)
-    |> Handoff.DAG.add_function(collage_fn)
-    |> Handoff.DAG.add_function(save_thumbnails_fn)
-    |> Handoff.DAG.add_function(save_collage_fn)
+    |> DAG.add_function(load_images_fn)
+    |> DAG.add_function(resize_fn)
+    |> DAG.add_function(grayscale_fn)
+    |> DAG.add_function(sepia_fn)
+    |> DAG.add_function(blur_fn)
+    |> DAG.add_function(edge_fn)
+    |> DAG.add_function(thumbnail_fn)
+    |> DAG.add_function(quality_assessment_fn)
+    |> DAG.add_function(collage_fn)
+    |> DAG.add_function(save_thumbnails_fn)
+    |> DAG.add_function(save_collage_fn)
   end
 
   @doc """
   Run the distributed image processing pipeline.
   """
   def run do
-    # Start Handoff
-    Handoff.start()
+    # Start Handoff application if not already running
+    if GenServer.whereis(DistributedExecutor) == nil do
+      {:ok, _pid} = Handoff.start_link()
+      Logger.info("Handoff Application started.")
+    else
+      Logger.info("Handoff Application already running.")
+    end
 
     # Register the local node with capabilities
-    IO.puts("Registering local node capabilities...")
-    Handoff.register_local_node(%{
-      cpu: 8,         # 8 CPU cores
-      memory: 16000,  # 16GB RAM
-      gpu: 1          # 1 GPU
-    })
+    # In a real multi-node setup, each node would do this.
+    local_node_caps = %{cpu: 8, memory: 16000, gpu: 1}
+    DistributedExecutor.register_local_node(local_node_caps)
+    Logger.info("Registered local node with capabilities: #{inspect(local_node_caps)}")
 
-    # Discover other nodes in the cluster
-    {:ok, discovered_nodes} = Handoff.discover_nodes()
-    IO.puts("Discovered nodes: #{inspect Map.keys(discovered_nodes)}")
+    # Discover other nodes in the cluster (optional, but good for distributed runs)
+    case DistributedExecutor.discover_nodes() do
+      {:ok, discovered_nodes} ->
+        Logger.info("Discovered nodes: #{inspect Map.keys(discovered_nodes)}")
+      {:error, reason} ->
+        Logger.error("Node discovery failed: #{inspect(reason)}")
+    end
 
     # Simulate image paths (would be real paths in a production app)
-    image_paths = Enum.map(1..5, fn i -> "/path/to/image_#{i}.jpg" end)
-    IO.puts("Processing #{length(image_paths)} images...")
+    # For this example, we'll create some dummy files if they don't exist
+    # to make ImageTransformations.load_image slightly more realistic.
+    image_dir = "temp_images"
+    File.mkdir_p(image_dir)
+    image_paths = Enum.map(1..5, fn i ->
+      path = Path.join(image_dir, "image_#{i}.jpg")
+      # Create an empty file if it doesn't exist for placeholder loading
+      unless File.exists?(path), do: File.write(path, "")
+      path
+    end)
+    IO.puts("Processing #{length(image_paths)} images from '#{image_dir}' directory...")
 
     # Create a DAG for image processing
     dag = build_pipeline(image_paths)
 
     # Validate the DAG
-    case Handoff.DAG.validate(dag) do
+    case DAG.validate(dag) do
       :ok ->
         IO.puts("\nExecuting distributed image processing pipeline...\n")
 
         # Execute the DAG across all available nodes
-        case Handoff.execute_distributed(dag,
+        case DistributedExecutor.execute(dag,
           allocation_strategy: :cost_optimized,
           max_retries: 2
         ) do
-          {:ok, results} ->
+          {:ok, exec_results} -> # Renamed to exec_results to avoid conflict
             # Show the saved collage path
-            collage_result = results[:save_collage]
+            collage_output = exec_results.results[:save_collage] # Access actual results map
             IO.puts("\nPipeline completed successfully!")
-            IO.puts("Collage saved to: #{collage_result.saved_path}")
+            IO.puts("Collage saved to: #{collage_output.saved_path}")
 
             # Show quality metrics
-            metrics = results[:quality_report]
+            quality_metrics = exec_results.results[:quality_report] # Access actual results map
             IO.puts("\nQuality metrics:")
-            Enum.each(metrics, fn {image_id, {_img, report}} ->
-              IO.puts("  #{inspect(function_id)}: " <>
+            Enum.each(quality_metrics, fn {image_id, {_img, report}} ->
+              # Assuming image_id is descriptive enough, removed function_id reference
+              IO.puts("  #{image_id}: " <>
                 "Sharpness: #{Float.round(report.sharpness, 1)}, " <>
                 "Noise: #{Float.round(report.noise_level, 1)}")
             end)
 
             # Show node allocation statistics
             IO.puts("\nNode allocation:")
-            nodes_used = Enum.map(valid_dag.functions, fn {id, func} ->
-              {id, func.node}
-            end) |> Enum.into(%{})
-
-            node_counts = Enum.reduce(nodes_used, %{}, fn {_id, node}, acc ->
-              Map.update(acc, node, 1, &(&1 + 1))
-            end)
+            # Access allocations from exec_results, not from dag.functions
+            node_counts =
+              exec_results.allocations
+              |> Enum.reduce(%{}, fn {_k, node}, acc -> Map.update(acc, node, 1, &(&1 + 1)) end)
 
             Enum.each(node_counts, fn {node, count} ->
               IO.puts("  #{node}: #{count} functions")
             end)
 
-            {:ok, results}
+            {:ok, exec_results.results} # Return the inner results map for consistency if needed
 
           {:error, reason} ->
             IO.puts("Error executing pipeline: #{inspect(reason)}")
