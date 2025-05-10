@@ -36,37 +36,7 @@ defmodule Handoff.RemoteExecutionWrapper do
         end
 
       # 2. Execute the function code
-      actual_result =
-        case function_struct.id do
-          {:serialize, producer_id, consumer_id, _args} ->
-            producer_function = Map.fetch!(all_dag_functions, producer_id)
-            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
-            source_node = producer_function.node
-            target_node = consumer_function.node
-
-            apply_code(
-              function_struct.code,
-              resolved_args ++
-                [source_node, target_node] ++
-                function_struct.extra_args
-            )
-
-          {:deserialize, producer_id, consumer_id, _args} ->
-            producer_function = Map.fetch!(all_dag_functions, producer_id)
-            consumer_function = Map.fetch!(all_dag_functions, consumer_id)
-            source_node = producer_function.node
-            target_node = consumer_function.node
-
-            apply_code(
-              function_struct.code,
-              resolved_args ++
-                [source_node, target_node] ++
-                function_struct.extra_args
-            )
-
-          _ ->
-            apply_code(function_struct.code, resolved_args ++ function_struct.extra_args)
-        end
+      actual_result = execute_code(function_struct, resolved_args, all_dag_functions)
 
       # 3. Store result in this node's local ResultStore
       case ResultStore.store(dag_id, function_struct.id, actual_result) do
@@ -99,6 +69,39 @@ defmodule Handoff.RemoteExecutionWrapper do
         )
 
         {:error, {kind, Exception.format(kind, reason, stacktrace)}}
+    end
+  end
+
+  defp execute_code(function_struct, resolved_args, all_dag_functions) do
+    case function_struct.id do
+      {:serialize, producer_id, consumer_id, _args} ->
+        producer_function = Map.fetch!(all_dag_functions, producer_id)
+        consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+        source_node = producer_function.node
+        target_node = consumer_function.node
+
+        apply_code(
+          function_struct.code,
+          resolved_args ++
+            [source_node, target_node] ++
+            function_struct.extra_args
+        )
+
+      {:deserialize, producer_id, consumer_id, _args} ->
+        producer_function = Map.fetch!(all_dag_functions, producer_id)
+        consumer_function = Map.fetch!(all_dag_functions, consumer_id)
+        source_node = producer_function.node
+        target_node = consumer_function.node
+
+        apply_code(
+          function_struct.code,
+          resolved_args ++
+            [source_node, target_node] ++
+            function_struct.extra_args
+        )
+
+      _ ->
+        apply_code(function_struct.code, resolved_args ++ function_struct.extra_args)
     end
   end
 
