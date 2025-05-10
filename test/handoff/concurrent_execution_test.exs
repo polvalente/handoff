@@ -35,7 +35,8 @@ defmodule Handoff.ConcurrentExecutionTest do
       dag2 = create_simple_dag(dag_id_2, "dag2")
 
       # Execute DAGs. DistributedExecutor.execute is internally async (spawns a Task).
-      # The GenServer call to DistributedExecutor itself is synchronous, returning :noreply quickly.
+      # The GenServer call to DistributedExecutor itself is synchronous,
+      # returning :noreply quickly.
       # The actual result is obtained by awaiting the task implicitly handled
       # by the test if we got {:ok, res}.
       # However, to ensure these start and potentially interleave,
