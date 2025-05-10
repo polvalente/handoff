@@ -379,4 +379,66 @@ defmodule Handoff.DistributedExecutorTest do
       assert Map.get(actual_results, :small_resource) == 42
     end
   end
+
+  describe "execute_function_on_node with synthetic nodes" do
+    test "injects source_node and target_node for serializer" do
+      dag = Handoff.DAG.new()
+
+      producer = %Handoff.Function{
+        id: :producer,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: [[1, 2]]
+      }
+
+      consumer = %Handoff.Function{
+        id: :consumer,
+        args: [
+          %Handoff.Function.Argument{
+            id: :producer,
+            serialization_fn: {Handoff.DistributedTestFunctions, :serialize, []},
+            deserialization_fn: {Handoff.DistributedTestFunctions, :deserialize, []}
+          }
+        ],
+        code: &Elixir.Function.identity/1
+      }
+
+      dag = Handoff.DAG.add_function(dag, producer)
+      dag = Handoff.DAG.add_function(dag, consumer)
+
+      assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
+      assert results[:producer] == [1, 2]
+      assert results[:consumer] == [1, 2]
+    end
+
+    test "injects source_node and target_node for deserializer" do
+      dag = Handoff.DAG.new()
+
+      producer = %Handoff.Function{
+        id: :producer,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: [1]
+      }
+
+      consumer = %Handoff.Function{
+        id: :consumer,
+        args: [
+          %Handoff.Function.Argument{
+            id: :producer,
+            serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
+            deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
+          }
+        ],
+        code: &Elixir.Function.identity/1
+      }
+
+      dag = Handoff.DAG.add_function(dag, producer)
+      dag = Handoff.DAG.add_function(dag, consumer)
+
+      assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
+      assert results[:producer] == 1
+      assert results[:consumer] == 1
+    end
+  end
 end

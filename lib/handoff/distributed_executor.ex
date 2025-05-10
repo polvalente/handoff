@@ -188,7 +188,7 @@ defmodule Handoff.DistributedExecutor do
 
       function_id ->
         # A monitored function execution crashed
-        Logger.warning("Function #{function_id} execution failed: #{inspect(reason)}")
+        Logger.warning("Function #{inspect(function_id)} execution failed: #{inspect(reason)}")
 
         # Update monitored processes
         monitored = Map.delete(state.monitored, pid)
@@ -354,13 +354,16 @@ defmodule Handoff.DistributedExecutor do
 
               {:error, reason} ->
                 # Error occurred
-                Logger.error("Error retrieving result for #{function_id}: #{inspect(reason)}")
+                Logger.error(
+                  "Error retrieving result for #{inspect(function_id)}: #{inspect(reason)}"
+                )
+
                 {pending_acc, Map.put(executed_acc, function_id, {:error, reason})}
             end
           catch
             _kind, error ->
               Logger.error(
-                "Exception when checking for function #{function_id}: #{inspect(error)}"
+                "Exception when checking for function #{inspect(function_id)}: #{inspect(error)}"
               )
 
               {pending_acc, Map.put(executed_acc, function_id, {:error, error})}
@@ -456,14 +459,17 @@ defmodule Handoff.DistributedExecutor do
             {pending_acc, to_be_executed_acc, executed_acc}
 
           {:error, reason} ->
-            Logger.error("Failed to execute function #{function_id}: #{inspect(reason)}")
+            Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
             executed_acc = Map.put(executed_acc, function_id, {:error, reason})
             to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
             {pending_acc, to_be_executed_acc, executed_acc}
         end
       catch
         _kind, error ->
-          Logger.error("Exception when executing function #{function_id}: #{inspect(error)}")
+          Logger.error(
+            "Exception when executing function #{inspect(function_id)}: #{inspect(error)}"
+          )
+
           executed_acc = Map.put(executed_acc, function_id, {:error, error})
           to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
           {pending_acc, to_be_executed_acc, executed_acc}
@@ -487,11 +493,11 @@ defmodule Handoff.DistributedExecutor do
       {:error, :resources_unavailable} ->
         {:error,
          {:allocation_error,
-          "Resources unavailable for function #{function.id} on node #{function.node}"}}
+          "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"}}
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
-          "Retrying function #{function.id} execution (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(reason)}"
+          "Retrying function #{inspect(function.id)} execution (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(reason)}"
         )
 
         execute_function_on_node(
@@ -504,13 +510,13 @@ defmodule Handoff.DistributedExecutor do
         )
 
       {:error, reason} ->
-        raise "Failed to execute function #{function.id} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
+        raise "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
     end
   rescue
     e ->
       if current_retry < max_retries do
         Logger.warning(
-          "Retrying function #{function.id} after error (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(e)}"
+          "Retrying function #{inspect(function.id)} after error (attempt #{current_retry + 1}/#{max_retries + 1}): #{inspect(e)}"
         )
 
         execute_function_on_node(
@@ -524,7 +530,7 @@ defmodule Handoff.DistributedExecutor do
       else
         reraise %RuntimeError{
                   message:
-                    "Failed to execute function #{function.id} after #{max_retries + 1} attempts: #{inspect(e)}"
+                    "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts: #{inspect(e)}"
                 },
                 __STACKTRACE__
       end
@@ -560,8 +566,31 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp execute_local(function, args) do
-    result = apply(function.code, args ++ function.extra_args)
-    {:ok, result}
+    case function.id do
+      {:serialize, _original_producer_id, _} ->
+        # For serializer, source_node is current node, target_node is consumer's node
+        source_node = Node.self()
+        target_node = function.node
+
+        result =
+          apply_code(function.code, args ++ [source_node, target_node] ++ function.extra_args)
+
+        {:ok, result}
+
+      {:deserialize, _original_producer_id, _} ->
+        # For deserializer, source_node is producer's node, target_node is current node
+        source_node = function.node
+        target_node = Node.self()
+
+        result =
+          apply_code(function.code, args ++ [source_node, target_node] ++ function.extra_args)
+
+        {:ok, result}
+
+      _ ->
+        result = apply_code(function.code, args ++ function.extra_args)
+        {:ok, result}
+    end
   end
 
   defp _execute_inline_local(dag_id, inline_function_def, executed_results, all_dag_functions) do
@@ -579,7 +608,7 @@ defmodule Handoff.DistributedExecutor do
       )
 
     # Execute the inline function
-    apply(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
+    apply_code(inline_function_def.code, inline_args ++ inline_function_def.extra_args)
   end
 
   defp execute_remote(dag_id, function, args, all_dag_functions) do
@@ -733,5 +762,13 @@ defmodule Handoff.DistributedExecutor do
           message:
             "Orchestrator failed to fetch argument #{inspect(arg_id)} for DAG #{inspect(dag_id)} for local execution on target_node #{inspect(target_node)}"
     end
+  end
+
+  defp apply_code(function, args) when is_function(function) do
+    apply(function, args)
+  end
+
+  defp apply_code({module, function}, args) do
+    apply(module, function, args)
   end
 end

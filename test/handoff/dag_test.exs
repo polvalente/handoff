@@ -106,4 +106,79 @@ defmodule Handoff.DAGTest do
       assert Enum.sort(cycle) == [:func2, :func3]
     end
   end
+
+  describe "add_function/2 with Handoff.Function.Argument" do
+    test "expands Handoff.Function.Argument into synthetic nodes" do
+      dag = Handoff.DAG.new()
+
+      producer = %Handoff.Function{
+        id: :producer,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: [1]
+      }
+
+      consumer = %Handoff.Function{
+        id: :consumer,
+        args: [
+          %Handoff.Function.Argument{
+            id: :producer,
+            serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
+            deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
+          }
+        ],
+        code: &Elixir.Function.identity/1
+      }
+
+      dag = Handoff.DAG.add_function(dag, producer)
+      dag = Handoff.DAG.add_function(dag, consumer)
+
+      assert Map.has_key?(
+               dag.functions,
+               {:serialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+             )
+
+      assert Map.has_key?(
+               dag.functions,
+               {:deserialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+             )
+    end
+
+    test "handles colocation directives" do
+      dag = Handoff.DAG.new()
+
+      producer = %Handoff.Function{
+        id: :producer,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: [1]
+      }
+
+      consumer = %Handoff.Function{
+        id: :consumer,
+        args: [
+          %Handoff.Function.Argument{
+            id: :producer,
+            serialization_fn: {Handoff.InternalOps, :identity_with_nodes, []},
+            deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
+          }
+        ],
+        code: &Elixir.Function.identity/1,
+        node: {:colocate_with_input, 0}
+      }
+
+      dag = Handoff.DAG.add_function(dag, producer)
+      dag = Handoff.DAG.add_function(dag, consumer)
+
+      assert Map.has_key?(
+               dag.functions,
+               {:serialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+             )
+
+      assert Map.has_key?(
+               dag.functions,
+               {:deserialize, :producer, {Handoff.InternalOps, :identity_with_nodes, []}}
+             )
+    end
+  end
 end

@@ -30,4 +30,20 @@ defmodule Handoff.DistributedTestFunctions do
     Agent.update(counter_agent, fn state -> %{count: state.count + 1} end)
     value
   end
+
+  def serialize(term, source_node, target_node) do
+    if source_node == target_node do
+      term
+    else
+      :erlang.term_to_binary(term)
+    end
+  end
+
+  def deserialize(term, source_node, target_node) do
+    if source_node == target_node do
+      term
+    else
+      :erlang.binary_to_term(term)
+    end
+  end
 end

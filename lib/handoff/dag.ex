@@ -116,15 +116,72 @@ defmodule Handoff.DAG do
         })
   """
   def add_function(dag, %Function{} = function) do
-    info = Elixir.Function.info(function.code)
+    case function.code do
+      {module, function} when is_atom(module) and is_atom(function) ->
+        :ok
 
-    case info[:type] do
-      :external ->
-        put_in(dag.functions[function.id], function)
-
-      _ ->
-        raise ":code must be an fully qualified &Module.function/arity capture, got: #{inspect(function.code)}"
+      code ->
+        if not is_function(code) or Elixir.Function.info(code)[:type] != :external do
+          raise ":code must be an fully qualified &Module.function/arity capture, got: #{inspect(code)}"
+        end
     end
+
+    # Expand Handoff.Function.Argument in args into synthetic nodes
+    {dag, new_args} =
+      Enum.reduce(function.args, {dag, []}, fn arg, {dag_acc, args_acc} ->
+        case arg do
+          %Handoff.Function.Argument{} = arg_spec ->
+            original_producer_id = arg_spec.id
+            consuming_function_id = function.id
+
+            # 1. Serialization node
+            {mod, fun, extra_args} =
+              ser_mfa =
+              arg_spec.serialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
+
+            serializer_node_id = {:serialize, original_producer_id, ser_mfa}
+
+            serializer_fn = %Function{
+              id: serializer_node_id,
+              args: [original_producer_id],
+              code: {mod, fun},
+              extra_args: extra_args,
+              type: :regular,
+              node: {:collocated, original_producer_id},
+              cost: nil
+            }
+
+            dag_acc = add_function(dag_acc, serializer_fn)
+
+            # 2. Deserialization node
+            {mod, fun, extra_args} =
+              deser_mfa =
+              arg_spec.deserialization_fn || {Handoff.InternalOps, :identity_with_nodes, []}
+
+            deserializer_node_id = {:deserialize, original_producer_id, deser_mfa}
+
+            deserializer_fn = %Function{
+              id: deserializer_node_id,
+              args: [serializer_node_id],
+              code: {mod, fun},
+              extra_args: extra_args,
+              type: :regular,
+              node: {:collocated, consuming_function_id},
+              cost: nil
+            }
+
+            dag_acc = add_function(dag_acc, deserializer_fn)
+
+            {dag_acc, [deserializer_node_id | args_acc]}
+
+          _ ->
+            {dag_acc, [arg | args_acc]}
+        end
+      end)
+
+    # Replace args with rewritten args
+    function = %{function | args: Enum.reverse(new_args)}
+    put_in(dag.functions[function.id], function)
   end
 
   @doc ~S"""

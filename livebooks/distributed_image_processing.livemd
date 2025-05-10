@@ -444,7 +444,7 @@ defmodule DistributedImageProcessing do
             metrics = results[:quality_report]
             IO.puts("\nQuality metrics:")
             Enum.each(metrics, fn {image_id, {_img, report}} ->
-              IO.puts("  #{image_id}: " <>
+              IO.puts("  #{inspect(function_id)}: " <>
                 "Sharpness: #{Float.round(report.sharpness, 1)}, " <>
                 "Noise: #{Float.round(report.noise_level, 1)}")
             end)

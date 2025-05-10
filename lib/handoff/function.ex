@@ -75,12 +75,37 @@ defmodule Handoff.Function do
 
   @type t :: %__MODULE__{
           id: term(),
-          args: [term()],
+          args: [term() | Handoff.Function.Argument.t()],
           code: function(),
           results: term() | nil,
           node: node() | nil,
           cost: map() | nil,
           extra_args: list(),
           type: :regular | :inline
+        }
+end
+
+defmodule Handoff.Function.Argument do
+  @moduledoc """
+  Defines a function argument with optional transformations.
+  """
+  @enforce_keys [:id]
+  defstruct [
+    # Atom: ID of the producer function.
+    :id,
+    # User-provided MFA `{module, function, static_arg}`.
+    serialization_fn: nil,
+    # Executed on the producer's node.
+    # Receives: `data, source_node, target_node, static_arg`
+    # User-provided MFA `{module, function, static_arg}`.
+    deserialization_fn: nil
+    # Executed on the consumer's node.
+    # Receives: `data, source_node, target_node, static_arg`
+  ]
+
+  @type t :: %__MODULE__{
+          id: term(),
+          serialization_fn: {module(), atom(), [term()]} | nil,
+          deserialization_fn: {module(), atom(), [term()]} | nil
         }
 end

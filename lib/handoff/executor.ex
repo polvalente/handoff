@@ -177,10 +177,18 @@ defmodule Handoff.Executor do
 
     # Execute the function with arguments and extra_args
     try do
-      result = apply(function.code, args ++ function.extra_args)
+      result = apply_code(function.code, args ++ function.extra_args)
       {:ok, result}
     rescue
       e -> {:error, {e, __STACKTRACE__}}
     end
+  end
+
+  defp apply_code(function, args) when is_function(function) do
+    apply(function, args)
+  end
+
+  defp apply_code({module, function}, args) do
+    apply(module, function, args)
   end
 end
