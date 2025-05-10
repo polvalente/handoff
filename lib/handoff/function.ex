@@ -14,6 +14,9 @@ defmodule Handoff.Function do
   * `:cost` - Optional resource requirements map (e.g., %{cpu: 2, memory: 1000})
   * `:extra_args` - Additional arguments provided at execution time
   * `:type` - Type of the function, :regular or :inline
+  * `:argument_inclusion` - One of :variadic or :as_list (defaults to :variadic)
+    * `:variadic` - Pass the list of N arguments as the first N arguments to the function
+    * `:as_list` - Pass arguments as a list in the first argument to the function
 
   ## Examples
 
@@ -77,7 +80,9 @@ defmodule Handoff.Function do
     # Additional arguments provided at execution time
     extra_args: [],
     # Type of the function, :regular or :inline
-    type: :regular
+    type: :regular,
+    # How to arguments are passed into :code
+    argument_inclusion: :variadic
   ]
 
   @type t :: %__MODULE__{
@@ -88,7 +93,8 @@ defmodule Handoff.Function do
           node: node() | nil,
           cost: map() | nil,
           extra_args: list(),
-          type: :regular | :inline
+          type: :regular | :inline,
+          argument_inclusion: :variadic | :as_list
         }
 end
 
@@ -105,14 +111,15 @@ defmodule Handoff.Function.Argument do
     # Executed on the producer's node.
     # Receives: `data, source_node, target_node, static_arg`
     # User-provided MFA `{module, function, static_arg}`.
-    deserialization_fn: nil
-    # Executed on the consumer's node.
-    # Receives: `data, source_node, target_node, static_arg`
+    deserialization_fn: nil,
+    # How to include the argument in the function call
+    argument_inclusion: :variadic
   ]
 
   @type t :: %__MODULE__{
           id: term(),
           serialization_fn: {module(), atom(), [term()]} | nil,
-          deserialization_fn: {module(), atom(), [term()]} | nil
+          deserialization_fn: {module(), atom(), [term()]} | nil,
+          argument_inclusion: :variadic | :as_list
         }
 end

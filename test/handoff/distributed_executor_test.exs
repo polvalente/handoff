@@ -228,6 +228,42 @@ defmodule Handoff.DistributedExecutorTest do
       # Check that the function was called twice
       assert Agent.get(agent, fn state -> state.count end) == 2
     end
+
+    test "can choose to pass arguments as a list instead of requiring variadic functions" do
+      # Use specific DAG ID
+      dag = DAG.new(self())
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [10]
+        })
+        |> DAG.add_function(%Function{
+          id: :b,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [20]
+        })
+        |> DAG.add_function(%Function{
+          id: :sum,
+          args: [:a, :b],
+          code: &Enum.sum/1,
+          extra_args: [],
+          argument_inclusion: :as_list
+        })
+
+      # Execute the DAG
+      assert {:ok, %{results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      # Check results
+      assert Map.get(actual_results, :a) == 10
+      assert Map.get(actual_results, :b) == 20
+      assert Map.get(actual_results, :sum) == 30
+    end
   end
 
   describe "inline function execution" do
