@@ -433,44 +433,33 @@ defmodule Handoff.DistributedExecutor do
       args_for_execution =
         fetch_arguments(dag.id, function.args, executed_acc, function.node, dag.functions)
 
-      try do
-        case execute_function_on_node(
-               dag.id,
-               function,
-               args_for_execution,
-               max_retries,
-               dag.functions
-             ) do
-          {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
-            executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
-            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-            {pending_acc, to_be_executed_acc, executed_acc}
+      case execute_function_on_node(
+             dag.id,
+             function,
+             args_for_execution,
+             max_retries,
+             dag.functions
+           ) do
+        {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
+          executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
+          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+          {pending_acc, to_be_executed_acc, executed_acc}
 
-          {:ok, result} ->
-            :ok = ResultStore.store(dag.id, function_id, result)
-            DataLocationRegistry.register(dag.id, function_id, function.node)
-            executed_acc = Map.put(executed_acc, function_id, result)
-            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-            {pending_acc, to_be_executed_acc, executed_acc}
+        {:ok, result} ->
+          :ok = ResultStore.store(dag.id, function_id, result)
+          DataLocationRegistry.register(dag.id, function_id, function.node)
+          executed_acc = Map.put(executed_acc, function_id, result)
+          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+          {pending_acc, to_be_executed_acc, executed_acc}
 
-          {:async, _pid} ->
-            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-            pending_acc = MapSet.put(pending_acc, function_id)
-            {pending_acc, to_be_executed_acc, executed_acc}
+        {:async, _pid} ->
+          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+          pending_acc = MapSet.put(pending_acc, function_id)
+          {pending_acc, to_be_executed_acc, executed_acc}
 
-          {:error, reason} ->
-            Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
-            executed_acc = Map.put(executed_acc, function_id, {:error, reason})
-            to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-            {pending_acc, to_be_executed_acc, executed_acc}
-        end
-      catch
-        _kind, error ->
-          Logger.error(
-            "Exception when executing function #{inspect(function_id)}: #{inspect(error)}"
-          )
-
-          executed_acc = Map.put(executed_acc, function_id, {:error, error})
+        {:error, reason} ->
+          Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
+          executed_acc = Map.put(executed_acc, function_id, {:error, reason})
           to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
           {pending_acc, to_be_executed_acc, executed_acc}
       end
@@ -528,11 +517,7 @@ defmodule Handoff.DistributedExecutor do
           current_retry + 1
         )
       else
-        reraise %RuntimeError{
-                  message:
-                    "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts: #{inspect(e)}"
-                },
-                __STACKTRACE__
+        reraise e, __STACKTRACE__
       end
   end
 

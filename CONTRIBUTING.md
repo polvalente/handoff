@@ -65,12 +65,10 @@ handoff/
 │   └── handoff/          # Implementation modules
 │       ├── dag.ex        # DAG construction and validation
 │       ├── function.ex   # Function struct definition
-│       ├── executor.ex   # Execution engine
+│       ├── distributed_executor.ex   # Execution engine
 │       └── ...
 ├── test/                 # Test files
 ├── config/               # Configuration
-├── docs/                 # Documentation
-│   └── guides/           # User guides
 ```
 
 ## Coding Guidelines

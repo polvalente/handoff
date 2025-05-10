@@ -5,6 +5,7 @@ defmodule Handoff.DistributedExecutorTest do
   alias Handoff.DistributedExecutor
   alias Handoff.Function
   alias Handoff.Function.Argument
+  alias Handoff.ResultStore
   alias Handoff.SimpleResourceTracker
 
   setup do
@@ -567,5 +568,164 @@ defmodule Handoff.DistributedExecutorTest do
       :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :consumer])
 
     assert consumer_result == [1, 2]
+  end
+
+  describe "local execution via DistributedExecutor" do
+    test "executes a simple DAG in dependency order" do
+      # Create a simple DAG: A -> B -> C
+      # Where A = 1, B = A + 1, C = B * 2
+
+      dag = Handoff.DAG.new()
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :b,
+          args: [:a],
+          code: &Kernel.+/2,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :c,
+          args: [:b],
+          code: &Kernel.*/2,
+          extra_args: [2]
+        })
+
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert returned_dag_id == dag.id
+      assert actual_results[:a] == 1
+      assert actual_results[:b] == 2
+      assert actual_results[:c] == 4
+
+      # Check results are in ResultStore for the correct DAG ID
+      assert {:ok, 1} = ResultStore.get(dag.id, :a)
+      assert {:ok, 2} = ResultStore.get(dag.id, :b)
+      assert {:ok, 4} = ResultStore.get(dag.id, :c)
+    end
+
+    test "executes a DAG with multiple dependencies" do
+      # Create a diamond DAG: A -> B -> D
+      #                       \\-> C -/
+
+      dag = Handoff.DAG.new()
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [5]
+        })
+        |> DAG.add_function(%Function{
+          id: :b,
+          args: [:a],
+          code: &Kernel.+/2,
+          extra_args: [2]
+        })
+        |> DAG.add_function(%Function{
+          id: :c,
+          args: [:a],
+          code: &Kernel.*/2,
+          extra_args: [2]
+        })
+        |> DAG.add_function(%Function{
+          id: :d,
+          args: [:b, :c],
+          code: &Kernel.+/2
+        })
+
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert returned_dag_id == dag.id
+      assert actual_results[:a] == 5
+      assert actual_results[:b] == 7
+      assert actual_results[:c] == 10
+      assert actual_results[:d] == 17
+    end
+
+    test "handles a DAG with extra_args" do
+      dag = Handoff.DAG.new()
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :b,
+          args: [:a],
+          code: &Kernel.*/2,
+          extra_args: [10]
+        })
+
+      assert {:ok, %{dag_id: returned_dag_id, results: actual_results}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert returned_dag_id == dag.id
+      assert actual_results[:a] == 1
+      assert actual_results[:b] == 10
+    end
+
+    test "handles execution errors" do
+      dag = Handoff.DAG.new()
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :error,
+          args: [:a],
+          code: &Handoff.DistributedTestFunctions.raise_error/2,
+          extra_args: ["An error occurred"]
+        })
+
+      {:error, %RuntimeError{message: "An error occurred, value: 1"}} =
+        DistributedExecutor.execute(dag_with_functions)
+    end
+
+    test "rejects invalid DAGs (validation happens before execution)" do
+      # Create a cyclic DAG: A -> B -> A
+      dag = Handoff.DAG.new()
+
+      dag_with_functions =
+        dag
+        |> DAG.add_function(%Function{
+          id: :a,
+          args: [:b],
+          code: &Kernel.+/2,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :b,
+          args: [:a],
+          code: &Kernel.*/2,
+          extra_args: [2]
+        })
+
+      # DistributedExecutor.execute calls DAG.validate first
+      assert {:error, {:cyclic_dependency, cycle}} =
+               DistributedExecutor.execute(dag_with_functions)
+
+      assert Enum.sort(cycle) == [:a, :b]
+    end
   end
 end
