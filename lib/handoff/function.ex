@@ -40,7 +40,7 @@ defmodule Handoff.Function do
   # A function with resource requirements for distributed execution.
   # The result of :process_data will be passed as the first argument to IO.inspect/2.
   %Handoff.Function{
-    id: :inspect_result, # Renamed for clarity with IO.inspect
+    id: :inspect_result,
     args: [:process_data],
     code: &IO.inspect/2,
     extra_args: [label: "Inspect result"],
