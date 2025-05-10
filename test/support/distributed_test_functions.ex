@@ -46,4 +46,8 @@ defmodule Handoff.DistributedTestFunctions do
       :erlang.binary_to_term(term)
     end
   end
+
+  def elem_with_nodes(tuple, _source_node, _target_node, index) do
+    elem(tuple, index)
+  end
 end

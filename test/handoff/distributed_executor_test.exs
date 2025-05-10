@@ -424,6 +424,55 @@ defmodule Handoff.DistributedExecutorTest do
       assert results[:consumer] == [1, 2]
     end
 
+    test "serializer can be used to fetch a single entry of a returning tuple", %{node_2: node_2} do
+      dag = Handoff.DAG.new()
+
+      producer = %Handoff.Function{
+        id: :producer,
+        args: [],
+        code: &Elixir.Function.identity/1,
+        extra_args: [{[1, 2], [3, 4]}],
+        node: Node.self()
+      }
+
+      consumer = %Handoff.Function{
+        id: :consumer,
+        args: [
+          %Handoff.Function.Argument{
+            id: :producer,
+            serialization_fn: {Handoff.DistributedTestFunctions, :elem_with_nodes, [1]},
+            deserialization_fn: {Handoff.InternalOps, :identity_with_nodes, []}
+          }
+        ],
+        code: &Elixir.Function.identity/1,
+        node: node_2
+      }
+
+      dag = Handoff.DAG.add_function(dag, producer)
+      dag = Handoff.DAG.add_function(dag, consumer)
+
+      assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
+
+      # same node serde should not be serialized as per the function's implementation
+      assert results[
+               {:serialize, :producer, :consumer,
+                {Handoff.DistributedTestFunctions, :elem_with_nodes, [1]}}
+             ] == [3, 4]
+
+      {:ok, deserialized_result} =
+        :rpc.call(node_2, Handoff.ResultStore, :get, [
+          dag.id,
+          {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
+        ])
+
+      assert deserialized_result == [3, 4]
+
+      assert results[:producer] == {[1, 2], [3, 4]}
+
+      {:ok, consumer_result} = :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, :consumer])
+      assert consumer_result == [3, 4]
+    end
+
     test "injects source_node and target_node for deserializer" do
       dag = Handoff.DAG.new()
 
