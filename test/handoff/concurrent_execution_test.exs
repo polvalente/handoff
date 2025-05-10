@@ -36,14 +36,16 @@ defmodule Handoff.ConcurrentExecutionTest do
 
       # Execute DAGs. DistributedExecutor.execute is internally async (spawns a Task).
       # The GenServer call to DistributedExecutor itself is synchronous, returning :noreply quickly.
-      # The actual result is obtained by awaiting the task implicitly handled by the test if we got {:ok, res}.
-      # However, to ensure these start and potentially interleave, we can Task.async them here too.
+      # The actual result is obtained by awaiting the task implicitly handled
+      # by the test if we got {:ok, res}.
+      # However, to ensure these start and potentially interleave,
+      # we can Task.async them here too.
 
       task1 = Task.async(fn -> DistributedExecutor.execute(dag1) end)
       task2 = Task.async(fn -> DistributedExecutor.execute(dag2) end)
 
-      {:ok, res1} = Task.await(task1, 15000)
-      {:ok, res2} = Task.await(task2, 15000)
+      {:ok, res1} = Task.await(task1, 15_000)
+      {:ok, res2} = Task.await(task2, 15_000)
 
       # Check DAG 1 results and ID
       assert res1.dag_id == dag_id_1

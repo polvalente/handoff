@@ -5,8 +5,8 @@ defmodule Handoff.DistributedExecutorTest do
   alias Handoff.DistributedExecutor
   alias Handoff.Function
   alias Handoff.Function.Argument
-  alias Handoff.SimpleResourceTracker
   alias Handoff.ResultStore
+  alias Handoff.SimpleResourceTracker
 
   setup do
     # Register local node with some capabilities
