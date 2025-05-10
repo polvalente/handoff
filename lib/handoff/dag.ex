@@ -21,22 +21,28 @@ defmodule Handoff.DAG do
   dag = Handoff.DAG.new()
 
   # Define functions
+  # Assumes MyPipelineFunctions module exists, e.g.:
+  # defmodule MyPipelineFunctions do
+  #   def transform_data(data_list), do: Enum.map(data_list, &(&1 * 2))
+  # end
+
   source = %Handoff.Function{
     id: :data_source,
     args: [],
-    code: fn -> [1, 2, 3, 4, 5] end
+    code: &Elixir.Function.identity/1,
+    extra_args: [[1, 2, 3, 4, 5]]
   }
 
   transform = %Handoff.Function{
     id: :transform,
     args: [:data_source],
-    code: fn %{data_source: data} -> Enum.map(data, &(&1 * 2)) end
+    code: &MyPipelineFunctions.transform_data/1
   }
 
   aggregation = %Handoff.Function{
     id: :aggregate,
     args: [:transform],
-    code: fn %{transform: data} -> Enum.sum(data) end
+    code: &Enum.sum/1
   }
 
   # Build the DAG
@@ -101,18 +107,13 @@ defmodule Handoff.DAG do
 
   ## Example
 
-      defmodule MyModule do
-        def random_number() do
-          :rand.uniform(100)
-        end
-      end
-
       dag =
         Handoff.DAG.new()
         |> Handoff.DAG.add_function(%Handoff.Function{
           id: :source,
           args: [],
-          code: &MyModule.random_number/0
+          code: &:rand.uniform/1,
+          extra_args: [100]
         })
   """
   def add_function(dag, %Function{} = function) do

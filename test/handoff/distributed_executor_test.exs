@@ -261,7 +261,7 @@ defmodule Handoff.DistributedExecutorTest do
           # Depends on :a
           id: :c,
           args: [:a],
-          code: &Kernel.*/2,
+          code: &*/2,
           # c_result = a_result * 3
           extra_args: [3],
           cost: %{cpu: 1, memory: 100}
@@ -594,7 +594,7 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :c,
           args: [:b],
-          code: &Kernel.*/2,
+          code: &*/2,
           extra_args: [2]
         })
 
@@ -635,7 +635,7 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :c,
           args: [:a],
-          code: &Kernel.*/2,
+          code: &*/2,
           extra_args: [2]
         })
         |> DAG.add_function(%Function{
@@ -668,7 +668,7 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: &Kernel.*/2,
+          code: &*/2,
           extra_args: [10]
         })
 
@@ -717,7 +717,7 @@ defmodule Handoff.DistributedExecutorTest do
         |> DAG.add_function(%Function{
           id: :b,
           args: [:a],
-          code: &Kernel.*/2,
+          code: &*/2,
           extra_args: [2]
         })
 
