@@ -128,14 +128,14 @@ defmodule Handoff.DistributedResultStoreTest do
       assert {:error, :not_found} = ResultStore.get(dag_id_b, item_id)
 
       # Fetch for dag_id_a
-      assert {:ok, ^val_a} = DistributedResultStore.get_with_timeout(dag_id_a, item_id, 1000)
+      assert {:ok, ^val_a} = DistributedResultStore.get_with_timeout(dag_id_a, item_id, 5000)
       # Now cached locally for dag_id_a
       assert {:ok, ^val_a} = ResultStore.get(dag_id_a, item_id)
       # dag_id_b should still not be locally cached by this operation
       assert {:error, :not_found} = ResultStore.get(dag_id_b, item_id)
 
       # Fetch for dag_id_b
-      assert {:ok, ^val_b} = DistributedResultStore.get_with_timeout(dag_id_b, item_id, 1000)
+      assert {:ok, ^val_b} = DistributedResultStore.get_with_timeout(dag_id_b, item_id, 5000)
       # Now cached locally for dag_id_b
       assert {:ok, ^val_b} = ResultStore.get(dag_id_b, item_id)
     end

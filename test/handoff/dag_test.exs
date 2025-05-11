@@ -134,15 +134,26 @@ defmodule Handoff.DAGTest do
       dag = Handoff.DAG.add_function(dag, producer)
       dag = Handoff.DAG.add_function(dag, consumer)
 
-      assert Map.has_key?(
+      assert Enum.any?(
                dag.functions,
-               {:serialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               fn {id, _} ->
+                 match?(
+                   {:serialize, _, :producer, :consumer,
+                    {Handoff.InternalOps, :identity_with_nodes, []}},
+                   id
+                 )
+               end
              )
 
-      assert Map.has_key?(
+      assert Enum.any?(
                dag.functions,
-               {:deserialize, :producer, :consumer,
-                {Handoff.InternalOps, :identity_with_nodes, []}}
+               fn {id, _} ->
+                 match?(
+                   {:deserialize, _, :producer, :consumer,
+                    {Handoff.InternalOps, :identity_with_nodes, []}},
+                   id
+                 )
+               end
              )
     end
 
@@ -172,15 +183,26 @@ defmodule Handoff.DAGTest do
       dag = Handoff.DAG.add_function(dag, producer)
       dag = Handoff.DAG.add_function(dag, consumer)
 
-      assert Map.has_key?(
+      assert Enum.any?(
                dag.functions,
-               {:serialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
+               fn {id, _} ->
+                 match?(
+                   {:serialize, _, :producer, :consumer,
+                    {Handoff.InternalOps, :identity_with_nodes, []}},
+                   id
+                 )
+               end
              )
 
-      assert Map.has_key?(
+      assert Enum.any?(
                dag.functions,
-               {:deserialize, :producer, :consumer,
-                {Handoff.InternalOps, :identity_with_nodes, []}}
+               fn {id, _} ->
+                 match?(
+                   {:deserialize, _, :producer, :consumer,
+                    {Handoff.InternalOps, :identity_with_nodes, []}},
+                   id
+                 )
+               end
              )
     end
   end

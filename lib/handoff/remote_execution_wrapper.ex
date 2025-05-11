@@ -74,7 +74,7 @@ defmodule Handoff.RemoteExecutionWrapper do
 
   defp execute_code(function_struct, resolved_args, all_dag_functions) do
     case function_struct.id do
-      {:serialize, producer_id, consumer_id, _args} ->
+      {:serialize, _unique_id, producer_id, consumer_id, _args} ->
         producer_function = Map.fetch!(all_dag_functions, producer_id)
         consumer_function = Map.fetch!(all_dag_functions, consumer_id)
         source_node = producer_function.node
@@ -87,7 +87,7 @@ defmodule Handoff.RemoteExecutionWrapper do
             function_struct.extra_args
         )
 
-      {:deserialize, producer_id, consumer_id, _args} ->
+      {:deserialize, _unique_id, producer_id, consumer_id, _args} ->
         producer_function = Map.fetch!(all_dag_functions, producer_id)
         consumer_function = Map.fetch!(all_dag_functions, consumer_id)
         source_node = producer_function.node

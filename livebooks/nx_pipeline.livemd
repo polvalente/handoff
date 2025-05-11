@@ -1,8 +1,9 @@
-# Untitled notebook
+# Nx Pipeline Example
 
 ```elixir
 Mix.install([
-  {:nx, path: "/Users/valente/coding/nx/nx"},
+  {:nx, github: "elixir-nx/nx", sparse: "nx", override: true},
+  {:exla, github: "elixir-nx/nx", sparse: "exla"},
   {:handoff, path: "/Users/valente/coding/handoff"}
 ])
 ```
@@ -10,7 +11,7 @@ Mix.install([
 ## Section
 
 ```elixir
-defmodule Mod do
+defmodule NxRunner do
   import Nx.Defn
 
   defn my_function(x, y) do
@@ -21,7 +22,7 @@ defmodule Mod do
   end
 
   def compile_and_call_expr(args, expr) do
-    Nx.Defn.jit_apply(fn _ -> expr end, [args])
+    Nx.Defn.jit_apply(fn _ -> expr end, [List.to_tuple(args)])
   end
 
   def load_from_file(filename, index) do
@@ -31,10 +32,26 @@ defmodule Mod do
     |> elem(index)
   end
 
-  def arg_list_to_tuple(arg1, arg2), do: {arg1, arg2}
+  def serialize(tuple, source, target, idx) do
+    t = elem(tuple, idx)
+
+    if source == target do
+      t
+    else
+      Nx.serialize(t)
+    end
+  end
+
+  def deserialize(tensor, source, target) do
+    if source == target do
+      tensor
+    else
+      Nx.deserialize(tensor)
+    end
+  end
 end
 
-expr = Nx.Defn.debug_expr(&Mod.my_function/2).(Nx.template({10}, :f32), 1)
+expr = Nx.Defn.debug_expr(&NxRunner.my_function/2).(Nx.template({10}, :f32), 1)
 ```
 
 ```elixir
@@ -42,47 +59,42 @@ nx_graph = Nx.Defn.Graph.split(expr, fn %{data: %{op: op}} -> op == :add end)
 ```
 
 ```elixir
-nx_stage_to_functions = fn stage ->
+args =
+  %Handoff.Function{
+    id: :arguments,
+    args: [],
+    code: &Function.identity/1,
+    extra_args: [{Nx.iota({10}, type: :f32), 1}],
+    type: :inline
+  }
+
+nx_stage_to_function = fn stage ->
   args =
     Enum.map(stage.arguments, fn
-      %{source: {nil, idx}} ->
-        %Handoff.Function{
-          id: {stage.id, nil, idx},
-          args: [],
-          code: &Mod.load_from_file/2,
-          extra_args: ["/Users/valente/Desktop/inputs.nx", idx],
-          type: :inline
-        }
-
-      %{source: {id, idx}} ->
-        %Handoff.Function{
-          id: {stage.id, id, idx},
-          args: [id],
-          code: &Kernel.elem/2,
-          extra_args: [idx]
+      %{source: {producer_id, idx}} ->
+        %Handoff.Function.Argument{
+          id: producer_id || :arguments,
+          serialization_fn: {NxRunner, :serialize, [idx]},
+          deserialization_fn: {NxRunner, :deserialize, []}
         }
     end)
 
-  arg_ids = Enum.map(args, & &1.id)
-
-  [
     %Handoff.Function{
       id: stage.id,
-      args: [{stage.id, :args}],
-      code: &Mod.compile_and_call_expr/2,
-      extra_args: [stage.expr]
-    },
-    %Handoff.Function{
-      id: {stage.id, :args},
-      args: arg_ids,
-      code: &Mod.arg_list_to_tuple/2,
-      extra_args: []
+      args: args,
+      code: &NxRunner.compile_and_call_expr/2,
+      extra_args: [stage.expr],
+      argument_inclusion: :as_list
     }
-    | args
-  ]
 end
 
-dag = Enum.flat_map(nx_graph, nx_stage_to_functions) |> Enum.reduce(Handoff.DAG.new(), &Handoff.DAG.add_function(&2, &1))
+dag =
+  nx_graph
+  |> Enum.map(nx_stage_to_function)
+  |> Enum.reduce(Handoff.DAG.new(), &Handoff.DAG.add_function(&2, &1))
+  |> Handoff.DAG.add_function(args)
+
+dag
 ```
 
 ```elixir

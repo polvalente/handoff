@@ -131,10 +131,16 @@ defmodule Handoff.DistributedExecutor do
     # Register initial arguments in the data location registry for this DAG
     dag.functions
     |> Map.values()
-    |> get_in([Access.all(), Access.key!(:args)])
+    |> get_in([Access.all(), Access.key(:args)])
     |> List.flatten()
     |> Enum.each(fn
       nil ->
+        :ok
+
+      {:serialize, _, _, _, _} ->
+        :ok
+
+      {:deserialize, _, _, _, _} ->
         :ok
 
       arg_id ->
@@ -558,7 +564,7 @@ defmodule Handoff.DistributedExecutor do
       end
 
     case function.id do
-      {:serialize, producer_id, consumer_id, _args} ->
+      {:serialize, _unique_id, producer_id, consumer_id, _args} ->
         # For serializer, source_node is producer's node, target_node is consumer's node
         producer_function = Map.fetch!(all_dag_functions, producer_id)
         consumer_function = Map.fetch!(all_dag_functions, consumer_id)
@@ -570,7 +576,7 @@ defmodule Handoff.DistributedExecutor do
 
         {:ok, result}
 
-      {:deserialize, producer_id, consumer_id, _args} ->
+      {:deserialize, _unique_id, producer_id, consumer_id, _args} ->
         # For deserializer, source_node is producer's node, target_node is consumer's node
         producer_function = Map.fetch!(all_dag_functions, producer_id)
         consumer_function = Map.fetch!(all_dag_functions, consumer_id)
@@ -592,6 +598,7 @@ defmodule Handoff.DistributedExecutor do
     # Fetch arguments for the inline function itself.
     # These might also be inline or regular.
     # Note: target_node for inline's args is Node.self() as it's executing locally.
+
     inline_args =
       fetch_arguments(
         dag_id,
@@ -689,7 +696,7 @@ defmodule Handoff.DistributedExecutor do
 
   # New helper function to fetch arguments from appropriate nodes
   defp fetch_arguments(dag_id, arg_ids, executed_results, target_node, all_dag_functions) do
-    if target_node == Node.self() do
+    if target_node == Node.self() or target_node == nil do
       # Local execution on the orchestrator node: resolve arguments.
       Enum.map(
         arg_ids,

@@ -447,16 +447,19 @@ defmodule Handoff.DistributedExecutorTest do
       assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
 
       # same node serde should not be serialized as per the function's implementation
-      assert results[
-               {:serialize, :producer, :consumer,
-                {Handoff.DistributedTestFunctions, :serialize, []}}
-             ] == [1, 2]
+      {_id, value} =
+        Enum.find(results, fn {id, _} ->
+          match?({:serialize, _, :producer, :consumer, _}, id)
+        end)
 
-      assert results[
-               {:deserialize, :producer, :consumer,
-                {Handoff.DistributedTestFunctions, :deserialize, []}}
-             ] ==
-               [1, 2]
+      assert value == [1, 2]
+
+      {_id, value} =
+        Enum.find(results, fn {id, _} ->
+          match?({:deserialize, _, :producer, :consumer, _}, id)
+        end)
+
+      assert value == [1, 2]
 
       assert results[:producer] == [1, 2]
       assert results[:consumer] == [1, 2]
@@ -492,16 +495,20 @@ defmodule Handoff.DistributedExecutorTest do
       assert {:ok, %{results: results}} = Handoff.DistributedExecutor.execute(dag)
 
       # same node serde should not be serialized as per the function's implementation
-      assert results[
-               {:serialize, :producer, :consumer,
-                {Handoff.DistributedTestFunctions, :elem_with_nodes, [1]}}
-             ] == [3, 4]
+      {_id, value} =
+        Enum.find(results, fn {id, _} ->
+          match?({:serialize, _, :producer, :consumer, _}, id)
+        end)
+
+      assert value == [3, 4]
+
+      {id, _} =
+        Enum.find(results, fn {id, _} ->
+          match?({:deserialize, _, :producer, :consumer, _}, id)
+        end)
 
       {:ok, deserialized_result} =
-        :rpc.call(node_2, Handoff.ResultStore, :get, [
-          dag.id,
-          {:deserialize, :producer, :consumer, {Handoff.InternalOps, :identity_with_nodes, []}}
-        ])
+        :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, id])
 
       assert deserialized_result == [3, 4]
 
@@ -572,28 +579,37 @@ defmodule Handoff.DistributedExecutorTest do
     assert {:ok, %{results: results, allocations: allocations}} =
              Handoff.DistributedExecutor.execute(dag)
 
-    assert allocations == %{
-             :producer => Node.self(),
-             :consumer => node_2,
-             {:serialize, :producer, :consumer,
-              {Handoff.DistributedTestFunctions, :serialize, []}} => Node.self(),
-             {:deserialize, :producer, :consumer,
-              {Handoff.DistributedTestFunctions, :deserialize, []}} => node_2
-           }
+    self_node = Node.self()
+
+    assert %{
+             producer: ^self_node,
+             consumer: ^node_2
+           } = allocations
+
+    assert {serialize_id, ^self_node} =
+             Enum.find(allocations, fn {id, _} ->
+               match?(
+                 {:serialize, _, :producer, :consumer,
+                  {Handoff.DistributedTestFunctions, :serialize, []}},
+                 id
+               )
+             end)
+
+    assert {deserialize_id, ^node_2} =
+             Enum.find(allocations, fn {id, _} ->
+               match?(
+                 {:deserialize, _, :producer, :consumer,
+                  {Handoff.DistributedTestFunctions, :deserialize, []}},
+                 id
+               )
+             end)
 
     assert results[:producer] == [1, 2]
 
-    assert results[
-             {:serialize, :producer, :consumer,
-              {Handoff.DistributedTestFunctions, :serialize, []}}
-           ] ==
-             :erlang.term_to_binary([1, 2])
+    assert results[serialize_id] == :erlang.term_to_binary([1, 2])
 
     {:ok, deserialized_result} =
-      :rpc.call(node_2, Handoff.ResultStore, :get, [
-        dag.id,
-        {:deserialize, :producer, :consumer, {Handoff.DistributedTestFunctions, :deserialize, []}}
-      ])
+      :rpc.call(node_2, Handoff.ResultStore, :get, [dag.id, deserialize_id])
 
     assert deserialized_result == [1, 2]
 
