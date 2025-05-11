@@ -8,6 +8,7 @@ defmodule Handoff.MixProject do
     [
       app: :handoff,
       name: "Handoff",
+      description: "A distributed computing framework for Elixir",
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
