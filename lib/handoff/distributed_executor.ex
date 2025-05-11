@@ -48,8 +48,8 @@ defmodule Handoff.DistributedExecutor do
   - opts: Optional execution options
 
   ## Returns
-  - {:ok, results} with a map of function IDs to results on success
-  - {:error, reason} on failure
+  - `{:ok, results}` with a map of function IDs to results on success
+  - `{:error, reason}` on failure
   """
   def execute(dag, opts \\ []) do
     case DAG.validate(dag) do
@@ -121,7 +121,7 @@ defmodule Handoff.DistributedExecutor do
   end
 
   @impl true
-  def handle_call({:execute, dag, opts}, from, state) do
+  def handle_call({:execute, dag, _opts}, from, state) do
     # Clear any previous results for this DAG
     ResultStore.clear(dag.id)
 
@@ -165,7 +165,7 @@ defmodule Handoff.DistributedExecutor do
     task =
       Task.async(fn ->
         try do
-          execute_dag(dag, opts, from, state.max_retries)
+          execute_dag(dag, from, state.max_retries)
         rescue
           e in [AllocationError] ->
             GenServer.reply(from, {:error, {:allocation_error, e.message}})
@@ -248,10 +248,7 @@ defmodule Handoff.DistributedExecutor do
 
   # Private functions
 
-  defp execute_dag(dag, opts, caller, max_retries) do
-    # Allocate functions to nodes
-    allocation_strategy = Keyword.get(opts, :allocation_strategy, :first_available)
-
+  defp execute_dag(dag, caller, max_retries) do
     # Get node capabilities from the tracker
     node_caps =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
@@ -262,7 +259,7 @@ defmodule Handoff.DistributedExecutor do
       end)
 
     # Allocate functions to nodes
-    allocations = allocate_functions(dag, node_caps, allocation_strategy)
+    allocations = allocate_functions(dag, node_caps)
 
     # Update dag functions with node assignments
     dag = assign_nodes_to_functions(dag, allocations)
@@ -636,7 +633,7 @@ defmodule Handoff.DistributedExecutor do
   end
 
   # Allocate functions to nodes based on resource requirements
-  defp allocate_functions(dag, node_caps, allocation_strategy) do
+  defp allocate_functions(dag, node_caps) do
     # Get list of functions from the DAG, excluding inline functions
     regular_functions =
       dag.functions
@@ -644,7 +641,7 @@ defmodule Handoff.DistributedExecutor do
       |> Enum.filter(fn func -> func.type == :regular end)
 
     # Use SimpleAllocator to get node assignments for regular functions
-    Handoff.SimpleAllocator.allocate(regular_functions, node_caps, allocation_strategy)
+    Handoff.SimpleAllocator.allocate(regular_functions, node_caps)
   end
 
   # Assign nodes to functions based on allocation result

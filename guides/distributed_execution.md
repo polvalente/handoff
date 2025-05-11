@@ -53,7 +53,7 @@ alias Handoff.Function
 cpu_heavy_fn = %Function{
   id: :cpu_intensive,
   args: [:input_data],
-  code: fn %{input_data: data} -> heavy_computation(data) end,
+  code: &SomeModule.heavy_computation/1,
   cost: %{cpu: 4, memory: 2000}  # Requires 4 CPU cores, 2GB memory
 }
 
@@ -61,7 +61,7 @@ cpu_heavy_fn = %Function{
 gpu_fn = %Function{
   id: :gpu_task,
   args: [:preprocessed_data],
-  code: fn %{preprocessed_data: data} -> gpu_computation(data) end,
+  code: &SomeModule.gpu_computation/1,
   cost: %{gpu: 1, memory: 4000}  # Requires 1 GPU, 4GB memory
 }
 ```
@@ -82,25 +82,7 @@ dag =
 :ok = Handoff.DAG.validate(dag)
 
 # Execute the DAG across the cluster
-{:ok, results} = Handoff.execute_distributed(dag,
-  allocation_strategy: :load_balanced,
-  max_retries: 3
-)
-```
-
-## Allocation Strategies
-
-Handoff provides several built-in allocation strategies:
-
-1. `:first_available` - Assigns functions to the first node with sufficient resources
-2. `:load_balanced` - Distributes functions evenly across nodes based on load
-3. `:cost_optimized` - Optimizes allocation to minimize overall resource usage
-
-```elixir
-# Using the cost-optimized allocator
-{:ok, results} = Handoff.execute_distributed(valid_dag,
-  allocation_strategy: :cost_optimized
-)
+{:ok, results} = Handoff.execute_distributed(dag, max_retries: 3)
 ```
 
 ## Fault Tolerance
@@ -112,46 +94,3 @@ Distributed execution in Handoff includes automatic fault tolerance:
 - Result synchronization across nodes
 
 If a node fails during execution, its tasks will be reassigned to other suitable nodes.
-
-## Monitoring Distributed Execution
-
-Handoff provides telemetry events for monitoring distributed execution:
-
-```elixir
-# Set up a handler for telemetry events
-:telemetry.attach(
-  "handoff-monitoring",
-  [:handoff, :execution, :function, :start],
-  fn name, measurements, metadata, _config ->
-    IO.puts("Function #{inspect(metadata.function_id)} started on node #{metadata.node}")
-    IO.puts("Measurements: #{inspect(measurements)}")
-  end,
-  nil
-)
-```
-
-## Advanced Configuration
-
-For more control over distributed execution:
-
-```elixir
-# Custom resource tracker
-Handoff.start(
-  resource_tracker: MyApp.CustomResourceTracker,
-  result_store: MyApp.CustomResultStore
-)
-
-# Dynamic resource updates
-Handoff.update_node_resources(Node.self(), %{cpu: 12, memory: 24000})
-```
-
-## Visualizing Distributed Execution
-
-Handoff includes tools to visualize the distribution of tasks:
-
-```elixir
-# Generate a visualization of the execution graph with node assignments
-{:ok, graph_data} = Handoff.Visualization.execution_graph(results)
-```
-
-The resulting graph data can be used with visualization libraries to create an interactive view of your distributed execution.

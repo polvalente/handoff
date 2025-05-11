@@ -41,26 +41,6 @@ defmodule Handoff.DistributedResultStore do
   end
 
   @doc """
-  Explicitly broadcasts a result to all connected nodes for a specific DAG.
-
-  Use this only when a result needs to be available on all nodes.
-
-  ## Parameters
-  - dag_id: The ID of the DAG
-  - function_id: The ID of the function
-  - result: The result to broadcast
-  """
-  def broadcast_result(dag_id, function_id, result) do
-    # Store locally first
-    ResultStore.store(dag_id, function_id, result)
-
-    # Broadcast to other nodes
-    GenServer.cast(__MODULE__, {:broadcast_result, dag_id, function_id, result})
-
-    :ok
-  end
-
-  @doc """
   Retrieves a result for a specific DAG, potentially fetching it from its origin node.
 
   ## Parameters
@@ -69,8 +49,8 @@ defmodule Handoff.DistributedResultStore do
   - timeout: Maximum time to wait in milliseconds, defaults to 5000
 
   ## Returns
-  - {:ok, result} on success
-  - {:error, :timeout} if the result is not available within the timeout
+  - `{:ok, result}` on success
+  - `{:error, :timeout}` if the result is not available within the timeout
   """
   def get_with_timeout(dag_id, function_id, timeout \\ 5000) do
     # Start a task to wait for the result
@@ -158,16 +138,6 @@ defmodule Handoff.DistributedResultStore do
     :net_kernel.monitor_nodes(true)
 
     {:ok, %{}}
-  end
-
-  @impl true
-  def handle_cast({:broadcast_result, dag_id, function_id, result}, state) do
-    # Send the result to all other nodes for the specific DAG
-    Enum.each(Node.list(), fn node ->
-      :rpc.cast(node, ResultStore, :store, [dag_id, function_id, result])
-    end)
-
-    {:noreply, state}
   end
 
   @impl true

@@ -32,8 +32,8 @@ defmodule Handoff do
       (:first_available or :load_balanced, defaults to :first_available)
 
   ## Returns
-  - {:ok, %{dag_id: dag_id, results: results_map}} with the DAG ID and a map of function IDs to results on success
-  - {:error, reason} on failure
+  - `{:ok, %{dag_id: dag_id, results: results_map}}` with the DAG ID and a map of function IDs to results on success
+  - `{:error, reason}` on failure
   """
   def execute(dag, opts \\ []) do
     # Use DistributedExecutor, which handles local execution if no other nodes are present.
@@ -51,8 +51,8 @@ defmodule Handoff do
     - :max_retries - Maximum number of times to retry failed functions (default: 3)
 
   ## Returns
-  - {:ok, %{dag_id: dag_id, results: results_map}} with the DAG ID and a map of function IDs to results on success
-  - {:error, reason} on failure
+  - `{:ok, %{dag_id: dag_id, results: results_map}}` with the DAG ID and a map of function IDs to results on success
+  - `{:error, reason}` on failure
   """
   def execute_distributed(dag, opts \\ []) do
     Handoff.DistributedExecutor.execute(dag, opts)
@@ -102,7 +102,7 @@ defmodule Handoff do
   Discovers and registers nodes in the cluster with their capabilities.
 
   ## Returns
-  - {:ok, discovered} with a map of node names to their capabilities
+  - `{:ok, discovered}` with a map of node names to their capabilities
   """
   def discover_nodes do
     Handoff.DistributedExecutor.discover_nodes()
@@ -158,19 +158,6 @@ defmodule Handoff do
   end
 
   @doc """
-  Explicitly broadcasts a result to all connected nodes for a specific DAG.
-  Use this only when a result needs to be available everywhere.
-
-  ## Parameters
-  - dag_id: The ID of the DAG
-  - function_id: The ID of the function
-  - result: The result to broadcast
-  """
-  def broadcast_result(dag_id, function_id, result) do
-    Handoff.DistributedResultStore.broadcast_result(dag_id, function_id, result)
-  end
-
-  @doc """
   Retrieves a result for a specific DAG, automatically fetching it from its origin node if necessary.
 
   ## Parameters
@@ -179,8 +166,8 @@ defmodule Handoff do
   - timeout: Maximum time to wait in milliseconds, defaults to 5000
 
   ## Returns
-  - {:ok, result} on success
-  - {:error, :timeout} if the result is not available within the timeout
+  - `{:ok, result}` on success
+  - `{:error, :timeout}` if the result is not available within the timeout
   """
   def get_result(dag_id, id, timeout \\ 5000) do
     Handoff.DistributedResultStore.get_with_timeout(dag_id, id, timeout)
@@ -206,8 +193,8 @@ defmodule Handoff do
   - id: The ID of the value to retrieve
 
   ## Returns
-  - {:ok, value} if found locally
-  - {:error, :not_found} if not found
+  - `{:ok, value}` if found locally
+  - `{:error, :not_found}` if not found
   """
   def get_local_value(dag_id, id) do
     Handoff.ResultStore.get(dag_id, id)
@@ -217,13 +204,13 @@ defmodule Handoff do
   Retrieves a value for a specific DAG, with automatic remote fetching if needed.
 
   ## Parameters
-  - dag_id: The ID of the DAG
-  - id: The ID of the value to retrieve
-  - from_node: Optional specific node to fetch from
+  - `dag_id`: The ID of the DAG
+  - `id`: The ID of the value to retrieve
+  - `from_node`: Optional specific node to fetch from
 
   ## Returns
-  - {:ok, value} if found or successfully fetched
-  - {:error, reason} if retrieval failed
+  - `{:ok, value}` if found or successfully fetched
+  - `{:error, reason}` if retrieval failed
   """
   def get_value(dag_id, id, from_node \\ nil) do
     Handoff.ResultStore.get_with_fetch(dag_id, id, from_node)
@@ -245,12 +232,12 @@ defmodule Handoff do
   Looks up where a data item (argument or result) is stored for a specific DAG.
 
   ## Parameters
-  - dag_id: The ID of the DAG
-  - data_id: The ID of the data to look up
+  - `dag_id`: The ID of the DAG
+  - `data_id`: The ID of the data to look up
 
   ## Returns
-  - {:ok, node_id} if the data location is found
-  - {:error, :not_found} if the data location is not registered
+  - `{:ok, node_id}` if the data location is found
+  - `{:error, :not_found}` if the data location is not registered
   """
   def lookup_data_location(dag_id, data_id) do
     Handoff.DataLocationRegistry.lookup(dag_id, data_id)

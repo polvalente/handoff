@@ -38,25 +38,6 @@ defmodule Handoff.DistributedResultStoreTest do
       assert node_b_lookup == Node.self()
     end
 
-    test "broadcast_result is scoped by DAG ID (local check)", %{
-      dag_id_a: dag_id_a,
-      dag_id_b: dag_id_b,
-      node2: _node2
-    } do
-      # This test primarily checks local ResultStore impact and
-      # that the cast message would be scoped.
-      # True broadcast verification requires checking remote nodes,
-      # which is harder in unit tests without full cluster setup.
-      DistributedResultStore.broadcast_result(dag_id_a, :item_broadcast, "val_a")
-      # Simulate a broadcast for another DAG ID for a different item, or even same item
-      DistributedResultStore.broadcast_result(dag_id_b, :item_broadcast_b, "val_b")
-
-      assert {:ok, "val_a"} = ResultStore.get(dag_id_a, :item_broadcast)
-      assert {:ok, "val_b"} = ResultStore.get(dag_id_b, :item_broadcast_b)
-
-      # To-do: A more robust test would mock/spy on :rpc.cast to ensure it's called with correct dag_id.
-    end
-
     test "get_with_timeout is scoped by DAG ID", %{dag_id_a: dag_id_a, dag_id_b: dag_id_b} do
       ResultStore.store(dag_id_a, :item_timeout, "value_a_timeout")
       ResultStore.store(dag_id_b, :item_timeout, "value_b_timeout")

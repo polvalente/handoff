@@ -4,7 +4,7 @@
 Mix.install([
   {:nx, github: "elixir-nx/nx", sparse: "nx", override: true},
   {:exla, github: "elixir-nx/nx", sparse: "exla"},
-  {:handoff, path: "/Users/valente/coding/handoff"}
+  {:handoff, "~> 0.1"}
 ])
 ```
 

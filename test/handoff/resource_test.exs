@@ -110,7 +110,7 @@ defmodule Handoff.ResourceTest do
       }
 
       # Allocate functions
-      allocations = SimpleAllocator.allocate(functions, caps, :first_available)
+      allocations = SimpleAllocator.allocate(functions, caps)
 
       # First function should fit on node1
       assert Map.get(allocations, :fn1) == node1
@@ -120,45 +120,6 @@ defmodule Handoff.ResourceTest do
 
       # Third function requires more memory than node1 has, should go to node2
       assert Map.get(allocations, :fn3) == node2
-    end
-
-    test "load_balanced allocation strategy", %{test_nodes: test_nodes} do
-      # Get nodes for testing
-      {node1, node2} = get_test_nodes(test_nodes)
-
-      SimpleResourceTracker.register(node1, %{cpu: 4, memory: 2000})
-      SimpleResourceTracker.register(node2, %{cpu: 4, memory: 2000})
-
-      # Create functions with resource requirements
-      functions = [
-        %Function{id: :fn1, args: [], code: fn -> :ok end, cost: %{cpu: 2}},
-        %Function{id: :fn2, args: [], code: fn -> :ok end, cost: %{cpu: 2}},
-        %Function{id: :fn3, args: [], code: fn -> :ok end, cost: %{cpu: 1}},
-        %Function{id: :fn4, args: [], code: fn -> :ok end, cost: %{cpu: 1}}
-      ]
-
-      # Create capabilities map
-      caps = %{
-        node1 => %{cpu: 4, memory: 2000},
-        node2 => %{cpu: 4, memory: 2000}
-      }
-
-      # Allocate functions
-      allocations = SimpleAllocator.allocate(functions, caps, :load_balanced)
-
-      # All functions should be allocated
-      assert map_size(allocations) == 4
-
-      # If we have distributed nodes, check balanced allocation
-      if node1 != node2 do
-        # Count allocations per node
-        node1_count = Enum.count(allocations, fn {_, node} -> node == node1 end)
-        node2_count = Enum.count(allocations, fn {_, node} -> node == node2 end)
-
-        # Should have balanced allocation (2 functions per node)
-        assert node1_count == 2
-        assert node2_count == 2
-      end
     end
   end
 

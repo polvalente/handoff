@@ -9,13 +9,7 @@ This example demonstrates using Handoff to build a simple data processing pipeli
 First, let's make sure the Handoff library is available:
 
 ```elixir
-# If you're running this in the Handoff project directory:
-Mix.install([]) # No additional dependencies needed
-
-# If you're running this separately, you'd need:
-# Mix.install([
-#   {:handoff, git: "https://github.com/your-username/handoff.git"}
-# ])
+Mix.install([{:handoff, "~> 0.1"}])
 ```
 
 ## Statistics Helper Module

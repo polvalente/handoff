@@ -39,8 +39,8 @@ defmodule Handoff.DataLocationRegistry do
   - data_id: The ID of the data (argument or result)
 
   ## Returns
-  - {:ok, node_id} if the data location is found for the DAG
-  - {:error, :not_found} if the data location is not registered for the DAG
+  - `{:ok, node_id}` if the data location is found for the DAG
+  - `{:error, :not_found}` if the data location is not registered for the DAG
   """
   def lookup(dag_id, data_id) do
     GenServer.call(__MODULE__, {:lookup, dag_id, data_id})

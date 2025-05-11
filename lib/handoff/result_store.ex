@@ -36,8 +36,8 @@ defmodule Handoff.ResultStore do
   - id: The ID of the value to retrieve
 
   ## Returns
-  - {:ok, value} if the value is found
-  - {:error, :not_found} if no value exists for the ID in the given DAG
+  - `{:ok, value}` if the value is found
+  - `{:error, :not_found}` if no value exists for the ID in the given DAG
   """
   def get(dag_id, id) do
     GenServer.call(__MODULE__, {:get, dag_id, id})
@@ -52,9 +52,9 @@ defmodule Handoff.ResultStore do
   - from_node: Optional node to fetch from directly
 
   ## Returns
-  - {:ok, value} if the value is found or successfully fetched
-  - {:error, :not_found} if the value couldn't be found
-  - {:error, reason} for other errors
+  - `{:ok, value}` if the value is found or successfully fetched
+  - `{:error, :not_found}` if the value couldn't be found
+  - `{:error, reason}` for other errors
   """
   def get_with_fetch(dag_id, id, from_node \\ nil) do
     # First check locally
@@ -76,8 +76,8 @@ defmodule Handoff.ResultStore do
   - from_node: Specific node to fetch from, or nil to look up in registry
 
   ## Returns
-  - {:ok, value} if successfully fetched
-  - {:error, reason} if fetch failed
+  - `{:ok, value}` if successfully fetched
+  - `{:error, reason}` if fetch failed
   """
   def fetch_remote(dag_id, id, from_node \\ nil) do
     # If not given a specific node, look up in registry
