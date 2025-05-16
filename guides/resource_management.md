@@ -77,9 +77,61 @@ end
 
 ### Built-in Resource Trackers
 
-Handoff provides one built-in resource tracker:
+A **resource tracker** in Handoff is responsible for monitoring and managing the computational resources available on each node in the cluster. It keeps track of what resources are registered, what is currently in use, and what is available for new tasks. Resource trackers are essential for ensuring that functions are only scheduled on nodes with sufficient available resources.
 
-1. `Handoff.SimpleResourceTracker`: Basic static resource tracking
+#### `Handoff.SimpleResourceTracker`
+
+Handoff provides a built-in resource tracker: `Handoff.SimpleResourceTracker`.
+
+- **Type:** Static, in-memory, per-node resource tracker
+- **Implementation:** Uses an ETS table and GenServer to track resources for each node
+- **Scope:** Tracks resources registered on the local node; does not persist state or synchronize across nodes
+- **API:**
+  - `register(node, caps)`: Register a node and its resource capabilities (e.g., `%{cpu: 4, memory: 8000}`)
+  - `available?(node, req)`: Check if a node has enough available resources for a given requirement
+  - `request(node, req)`: Reserve resources for a task (returns `:ok` or `{:error, :resources_unavailable}`)
+  - `release(node, req)`: Release previously reserved resources
+  - `get_capabilities()`: Get the full resource capabilities of the local node
+
+**Example usage:**
+
+```elixir
+alias Handoff.SimpleResourceTracker
+
+# Register a node with its capabilities
+SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 8000})
+
+# Check if resources are available
+if SimpleResourceTracker.available?(Node.self(), %{cpu: 2, memory: 2000}) do
+  # Request resources for a task
+  case SimpleResourceTracker.request(Node.self(), %{cpu: 2, memory: 2000}) do
+    :ok ->
+      # ... run your task ...
+      # Release resources when done
+      SimpleResourceTracker.release(Node.self(), %{cpu: 2, memory: 2000})
+    {:error, :resources_unavailable} ->
+      IO.puts("Not enough resources available!")
+  end
+else
+  IO.puts("Resources not available")
+end
+```
+
+**How it works:**
+- When a node is registered, its total resource capacity is stored.
+- When resources are requested, the tracker checks if enough are available (total minus currently used). If so, it marks them as used.
+- When resources are released, the used count is decremented.
+- All tracking is local to the node running the tracker.
+
+**Limitations:**
+- `SimpleResourceTracker` is static and in-memory only. If the node restarts, resource state is lost.
+- It does not synchronize state between nodes; each node tracks its own resources independently.
+- Not suitable for dynamic or persistent resource tracking across a distributed cluster.
+
+**Extending Resource Tracking:**
+If you need more advanced tracking (e.g., persistent, distributed, or dynamic resource management), you can implement the `Handoff.ResourceTracker` behaviour and provide your own tracker module.
+
+See `lib/handoff/resource_tracker.ex` for the required callbacks and documentation.
 
 ## Allocation Strategies
 
