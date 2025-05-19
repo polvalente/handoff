@@ -140,3 +140,78 @@ Handoff's allocators decide which node should execute each function based on res
 ### Built-in Allocators
 
 1. `Handoff.SimpleAllocator`: Uses first-available allocation strategy.
+
+#### Example: Allocating Multiple Functions to Nodes
+
+Suppose you have a cluster with two nodes, each with different resource capacities:
+
+```elixir
+nodes_caps = %{
+  :node1@host => %{cpu: 4, memory: 8000},
+  :node2@host => %{cpu: 2, memory: 4000}
+}
+
+functions = [
+  %Handoff.Function{id: :f1, cost: %{cpu: 2, memory: 2000}},
+  %Handoff.Function{id: :f2, cost: %{cpu: 1, memory: 1000}},
+  %Handoff.Function{id: :f3, cost: %{cpu: 3, memory: 4000}},
+  %Handoff.Function{id: :f4, cost: %{cpu: 1, memory: 1000}}
+]
+
+assignments = Handoff.SimpleAllocator.allocate(functions, nodes_caps)
+IO.inspect(assignments)
+# Example output:
+# %{f1: :node1@host, f2: :node1@host, f3: :node2@host, f4: :node2@host}
+```
+
+**Explanation:**
+- The allocator tries to assign each function to the first node with enough available resources.
+- After each assignment, the node's available resources are reduced for subsequent allocations.
+- If a node cannot satisfy a function's requirements, the allocator tries the next node.
+
+#### Example: Handling Insufficient Resources
+
+If no node has enough resources for a function, the allocator will still assign it (to the first node), but you should handle this case in your workflow:
+
+```elixir
+nodes_caps = %{
+  :node1@host => %{cpu: 1, memory: 1000},
+  :node2@host => %{cpu: 1, memory: 1000}
+}
+
+functions = [
+  %Handoff.Function{id: :big_task, cost: %{cpu: 2, memory: 2000}}
+]
+
+assignments = Handoff.SimpleAllocator.allocate(functions, nodes_caps)
+IO.inspect(assignments)
+# Output: %{big_task: :node1@host}
+# Note: In this case, neither node actually has enough resources. You should check resource availability before running the task.
+```
+
+#### Example: Pinned and Collocated Functions
+
+You can pin a function to a specific node, or collocate it with another function:
+
+```elixir
+functions = [
+  %Handoff.Function{id: :f1, cost: %{cpu: 1}, node: :node2@host}, # pinned to node2
+  %Handoff.Function{id: :f2, cost: %{cpu: 1}},                    # dynamic
+  %Handoff.Function{id: :f3, cost: %{cpu: 1}, node: {:collocated, :f2}} # must run on same node as f2
+]
+
+nodes_caps = %{
+  :node1@host => %{cpu: 2},
+  :node2@host => %{cpu: 2}
+}
+
+assignments = Handoff.SimpleAllocator.allocate(functions, nodes_caps)
+IO.inspect(assignments)
+# Example output:
+# %{f1: :node2@host, f2: :node1@host, f3: :node1@host}
+# f1 is pinned to node2, f2 is dynamically assigned, f3 is collocated with f2
+```
+
+**Tips:**
+- Always check resource availability before running tasks, especially if using custom allocators or dynamic resource changes.
+- For advanced allocation strategies, you can implement your own allocator module using the `Handoff.Allocator` behaviour.
