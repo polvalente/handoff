@@ -10,7 +10,7 @@ First, let's set up the environment:
 
 ```elixir
 Mix.install([
-  {:handoff, path: Path.join(__DIR__, "..")},
+  {:handoff, "~> 0.1"},
   {:image, "~> 0.14"} # For actual image processing
 ])
 ```
