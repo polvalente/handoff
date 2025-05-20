@@ -94,3 +94,74 @@ Distributed execution in Handoff includes automatic fault tolerance:
 - Result synchronization across nodes
 
 If a node fails during execution, its tasks will be reassigned to other suitable nodes.
+
+## Example: Branching DAG for Distributed Execution
+
+You can execute more complex, tree-like DAGs across your cluster. For example, suppose you want to preprocess data in two different ways before aggregating the results:
+
+```elixir
+# Install dependency in your mix.exs:
+#   {:handoff, "~> 0.1"}
+
+# Handoff requires fully qualified function captures for :code and extra_args.
+defmodule Transformations do
+  def inc(x), do: x + 1
+  def double(x), do: x * 2
+  def sum_two_lists(a, b), do: Enum.sum(a) + Enum.sum(b)
+end
+
+alias Handoff.Function
+
+dag = Handoff.new()
+
+source_fn = %Function{
+  id: :input_data,
+  args: [],
+  code: &Elixir.Function.identity/1,
+  extra_args: [[10, 20, 30]]
+}
+
+preprocess_a = %Function{
+  id: :pre_a,
+  args: [:input_data],
+  code: &Enum.map/2,
+  extra_args: [&Transformations.inc/1],
+  cost: %{cpu: 2}
+}
+
+preprocess_b = %Function{
+  id: :pre_b,
+  args: [:input_data],
+  code: &Enum.map/2,
+  extra_args: [&Transformations.double/1],
+  cost: %{cpu: 2}
+}
+
+aggregate = %Function{
+  id: :agg,
+  args: [:pre_a, :pre_b],
+  code: &Transformations.sum_two_lists/2,
+  cost: %{cpu: 1}
+}
+
+dag =
+  dag
+  |> Handoff.DAG.add_function(source_fn)
+  |> Handoff.DAG.add_function(preprocess_a)
+  |> Handoff.DAG.add_function(preprocess_b)
+  |> Handoff.DAG.add_function(aggregate)
+
+:ok = Handoff.DAG.validate(dag)
+```
+
+> **Note:** Handoff requires all function references in :code and extra_args to be fully qualified (e.g., &Module.function/arity), not anonymous functions.
+
+This DAG structure looks like:
+
+```mermaid
+graph TD;
+  input_data --> pre_a;
+  input_data --> pre_b;
+  pre_a --> agg;
+  pre_b --> agg;
+```
