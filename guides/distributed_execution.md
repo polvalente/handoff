@@ -160,8 +160,8 @@ This DAG structure looks like:
 
 ```mermaid
 graph TD;
-  input_data --> pre_a;
-  input_data --> pre_b;
-  pre_a --> agg;
-  pre_b --> agg;
+  input_data --> left;
+  input_data --> right;
+  left --> agg;
+  right --> agg;
 ```
