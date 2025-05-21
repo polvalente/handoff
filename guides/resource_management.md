@@ -191,7 +191,7 @@ IO.inspect(assignments)
 
 #### Example: Pinned and Collocated Functions
 
-You can pin a function to a specific node, or collocate it with another function:
+You can pin a function to a specific node, or collocate it to another function:
 
 ```elixir
 functions = [
