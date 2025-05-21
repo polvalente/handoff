@@ -123,14 +123,14 @@ source_fn = %Function{
 
 preprocess_a = %Function{
   id: :pre_a,
-  args: [:input_data],
+  args: [:left],
   code: &Enum.map/2,
   extra_args: [&Transformations.inc/1],
   cost: %{cpu: 2}
 }
 
 preprocess_b = %Function{
-  id: :pre_b,
+  id: :right,
   args: [:input_data],
   code: &Enum.map/2,
   extra_args: [&Transformations.double/1],
@@ -139,7 +139,7 @@ preprocess_b = %Function{
 
 aggregate = %Function{
   id: :agg,
-  args: [:pre_a, :pre_b],
+  args: [:left, :right],
   code: &Transformations.sum_two_lists/2,
   cost: %{cpu: 1}
 }
