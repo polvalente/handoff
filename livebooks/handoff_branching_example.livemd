@@ -1,0 +1,80 @@
+# Handoff Branching DAG Example
+
+This Livebook demonstrates how to build and execute a branching (tree-like) DAG using the Handoff library in Elixir.
+
+## Setup
+
+First, install the required dependencies:
+
+```elixir
+Mix.install([
+  {:handoff, "~> 0.1"}
+])
+
+# Define transformation functions in a dedicated module
+
+defmodule Transformations do
+  def identity(x), do: x
+  def double(x), do: x * 2
+  def triple(x), do: x * 3
+  def sum_two_lists(d, t), do: Enum.sum(d) + Enum.sum(t)
+end
+```
+
+## Define the DAG
+
+```elixir
+alias Handoff.Function
+
+dag = Handoff.new()
+
+# Source node
+data = [1, 2, 3, 4, 5]
+source_fn = %Function{
+  id: :data_source,
+  args: [],
+  code: &Transformations.identity/1,
+  extra_args: [data]
+}
+
+# Two parallel transformations
+transform_double = %Function{
+  id: :double,
+  args: [:data_source],
+  code: &Enum.map/2,
+  extra_args: [&Transformations.double/1]
+}
+
+transform_triple = %Function{
+  id: :triple,
+  args: [:data_source],
+  code: &Enum.map/2,
+  extra_args: [&Transformations.triple/1]
+}
+
+# Aggregation node
+aggregate_fn = %Function{
+  id: :sum,
+  args: [:double, :triple],
+  code: &Transformations.sum_two_lists/2
+}
+
+dag =
+  dag
+  |> Handoff.DAG.add_function(source_fn)
+  |> Handoff.DAG.add_function(transform_double)
+  |> Handoff.DAG.add_function(transform_triple)
+  |> Handoff.DAG.add_function(aggregate_fn)
+
+:ok = Handoff.DAG.validate(dag)
+dag
+```
+
+## Execute the DAG
+
+```elixir
+{:ok, results} = Handoff.execute(dag)
+
+IO.inspect(results, label: "All results")
+IO.puts("The sum is: #{results[:sum]}")
+``` 

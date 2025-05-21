@@ -67,7 +67,26 @@ defmodule Handoff.MixProject do
       groups_for_extras: [
         Guides: ~r"^guides/",
         Livebooks: ~r"^livebooks/"
-      ]
+      ],
+      before_closing_body_tag: fn _ ->
+        """
+        <script src=\"https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js\"></script>
+        <script>
+          document.addEventListener(\"DOMContentLoaded\", function() {
+            document.querySelectorAll('pre code.language-mermaid').forEach(function(block) {
+              var parent = block.parentElement;
+              var container = document.createElement('div');
+              container.className = 'mermaid';
+              container.textContent = block.textContent;
+              parent.parentElement.replaceChild(container, parent);
+            });
+            if (window.mermaid) {
+              mermaid.initialize({startOnLoad:true});
+            }
+          });
+        </script>
+        """
+      end
     ]
   end
 end
