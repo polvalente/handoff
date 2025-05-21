@@ -120,7 +120,7 @@ end
 **How it works:**
 - When a node is registered, its total resource capacity is stored.
 - When resources are requested, the tracker checks if enough are available (total minus currently used). If so, it marks them as used.
-- When resources are released, the used count is decremented.
+- When resources are released, the available amount increases again.
 - All tracking is local to the node running the tracker.
 
 **Limitations:**
