@@ -19,6 +19,8 @@ defmodule Handoff do
   Must be called before executing any DAGs.
   """
   def start(opts \\ []) do
+    resource_tracker = Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
+    Application.put_env(:handoff, :resource_tracker, resource_tracker)
     Handoff.Supervisor.start_link(opts)
   end
 
@@ -95,7 +97,8 @@ defmodule Handoff do
   ```
   """
   def register_node(node, caps) do
-    Handoff.SimpleResourceTracker.register(node, caps)
+    tracker = Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
+    tracker.register(node, caps)
   end
 
   @doc """
@@ -140,7 +143,8 @@ defmodule Handoff do
   ```
   """
   def resources_available?(node, req) do
-    Handoff.SimpleResourceTracker.available?(node, req)
+    tracker = Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
+    tracker.available?(node, req)
   end
 
   @doc """
