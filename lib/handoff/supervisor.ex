@@ -18,7 +18,7 @@ defmodule Handoff.Supervisor do
     resource_tracker = Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
     children = [
       {Handoff.ResultStore, []},
-      {resource_tracker, []},
+      resource_tracker,
       {Handoff.DataLocationRegistry, []},
       {Handoff.DistributedExecutor, Keyword.put(opts, :resource_tracker, resource_tracker)},
       {Handoff.DistributedResultStore, []}
