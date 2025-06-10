@@ -17,9 +17,21 @@ defmodule Handoff do
   Starts the Handoff supervision tree.
 
   Must be called before executing any DAGs.
+  Returns the supervisor pid and the resource tracker pid or name.
   """
   def start(opts \\ []) do
-    Handoff.Supervisor.start_link(opts)
+    resource_tracker = Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
+    tracker =
+      case resource_tracker do
+        mod when is_atom(mod) ->
+          # Start the tracker if it's a module
+          {:ok, pid} = mod.start_link([])
+          pid
+        pid when is_pid(pid) or is_atom(pid) ->
+          pid
+      end
+    {:ok, sup_pid} = Handoff.Supervisor.start_link(Keyword.put(opts, :resource_tracker, tracker))
+    {:ok, sup_pid, tracker}
   end
 
   @doc """
@@ -86,16 +98,17 @@ defmodule Handoff do
   Registers a node with its resource capabilities.
 
   ## Parameters
+  - tracker: The resource tracker pid or name
   - node: The node to register
   - caps: Map of capabilities/resources the node provides
 
   ## Example
   ```
-  Handoff.register_node(Node.self(), %{cpu: 4, memory: 8000})
+  Handoff.register_node(tracker, Node.self(), %{cpu: 4, memory: 8000})
   ```
   """
-  def register_node(node, caps) do
-    Handoff.SimpleResourceTracker.register(node, caps)
+  def register_node(tracker, node, caps) do
+    tracker.register(node, caps)
   end
 
   @doc """
@@ -127,6 +140,7 @@ defmodule Handoff do
   Checks if the specified node has the required resources available.
 
   ## Parameters
+  - tracker: The resource tracker pid or name
   - node: The node to check
   - req: Map of resource requirements to check
 
@@ -136,11 +150,11 @@ defmodule Handoff do
 
   ## Example
   ```
-  Handoff.resources_available?(Node.self(), %{cpu: 2, memory: 4000})
+  Handoff.resources_available?(tracker, Node.self(), %{cpu: 2, memory: 4000})
   ```
   """
-  def resources_available?(node, req) do
-    Handoff.SimpleResourceTracker.available?(node, req)
+  def resources_available?(tracker, node, req) do
+    tracker.available?(node, req)
   end
 
   @doc """
