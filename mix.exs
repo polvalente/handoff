@@ -62,7 +62,7 @@ defmodule Handoff.MixProject do
   defp docs do
     [
       main: "getting_started",
-      source_url_pattern: "#{@source_url}/blob/v#{@version}/handoff/%{path}#L%{line}",
+      source_url_pattern: "#{@source_url}/blob/v#{@version}/%{path}#L%{line}",
       extras: Path.wildcard("guides/**/*.md") ++ Path.wildcard("livebooks/**/*.livemd"),
       groups_for_extras: [
         Guides: ~r"^guides/",
