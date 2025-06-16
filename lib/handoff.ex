@@ -132,41 +132,7 @@ defmodule Handoff do
   Handoff.register_local_node(%{cpu: 8, memory: 16000})
   ```
   """
-  def register_local_node(caps) do
-    Handoff.DistributedExecutor.register_local_node(caps)
-  end
 
-  @doc """
-  Checks if the specified node has the required resources available.
-
-  ## Parameters
-  - tracker: The resource tracker pid or name
-  - node: The node to check
-  - req: Map of resource requirements to check
-
-  ## Returns
-  - true if resources are available
-  - false otherwise
-
-  ## Example
-  ```
-  Handoff.resources_available?(tracker, Node.self(), %{cpu: 2, memory: 4000})
-  ```
-  """
-  def resources_available?(tracker, node, req) do
-    tracker.available?(node, req)
-  end
-
-  @doc """
-  Stores a function result locally on the origin node for a specific DAG and registers its location.
-  The result is stored only on the node where it was produced, not broadcast.
-
-  ## Parameters
-  - dag_id: The ID of the DAG
-  - function_id: The ID of the function
-  - result: The result to store
-  - origin_node: The node where the result was produced (defaults to current node)
-  """
   def store_result(dag_id, function_id, result, origin_node \\ Node.self()) do
     Handoff.DistributedResultStore.store_distributed(dag_id, function_id, result, origin_node)
   end
