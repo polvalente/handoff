@@ -1,0 +1,242 @@
+# Getting Started with Handoff
+
+```elixir
+Mix.install [{:handoff, "~> 0.1"}]
+```
+
+## Introduction
+
+This guide will help you get started with Handoff, a library for building and executing Directed Acyclic Graphs (DAGs) of functions in Elixir.
+
+We'll start by looking at a simple example and then we'll discuss each of its components.
+
+## Installation
+
+Add `handoff` to your list of dependencies in `mix.exs`:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+def deps do
+  [
+    {:handoff, "~> 0.1.0"}
+  ]
+end
+```
+
+Then run:
+
+```bash
+mix deps.get
+```
+
+## Building Our First Handoff DAG
+
+`Handoff.new()` generates the fundamental data structure on which Handoff works, a Directed Acyclic Graph (DAG).
+
+For the purposes of this library, we can think of DAGs as a collection of points (nodes, in graph theory terms) that relate to each other. This relationship is directed. An easy way to think about this is by thinking about a family tree: a child depends on its parents, which may depend on their parents, as we can see below.
+
+```mermaid
+stateDiagram-v2
+
+Father --> Child
+Mother --> Child
+Uncle --> Child
+
+Grandparent --> Father
+Grandparent --> Uncle
+```
+
+In Handoff terms, we'll have DAGs of functions which may depend on each other's results to produce their own outputs. Graph inputs are also represented as nodes. For example, a mathematical function such as $f(x, y) = x * 3 + y * 2$ can be represented as:
+
+```mermaid
+stateDiagram-v2
+
+x --> multiply(arg0,3): as arg0
+y --> multiply(arg0,2): as arg0
+
+multiply(arg0,3) --> add(arg0,arg1): as arg0
+multiply(arg0,2) --> add(arg0,arg1): as arg1
+```
+
+We'll now implement this graph in Handoff.
+
+```elixir
+dag = Handoff.new()
+
+x =
+  %Handoff.Function{
+    id: :x,
+    args: [],
+    code: &Elixir.Function.identity/1,
+    extra_args: [10]
+  }
+
+y =
+  %Handoff.Function{
+    id: :y,
+    args: [],
+    code: &Elixir.Function.identity/1,
+    extra_args: [20]
+  }
+
+times_3 =
+  %Handoff.Function{
+    id: :times_3,
+    args: [:x],
+    extra_args: [3],
+    code: &Kernel.*/2
+  }
+
+times_2 =
+  %Handoff.Function{
+    id: :times_2,
+    args: [:y],
+    extra_args: [2],
+    code: &Kernel.*/2
+  }
+
+add =
+  %Handoff.Function{
+    id: :add,
+    args: [:times_3, :times_2],
+    extra_args: [],
+    code: &Kernel.+/2
+  }
+
+dag =
+  dag
+  |> Handoff.DAG.add_function(x)
+  |> Handoff.DAG.add_function(y)
+  |> Handoff.DAG.add_function(times_3)
+  |> Handoff.DAG.add_function(times_2)
+  |> Handoff.DAG.add_function(add)
+
+{:ok, output} = Handoff.execute(dag)
+
+output
+```
+
+Now let's distill the `times_2` function definition:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+%Handoff.Function{
+  id: :times_2,
+  args: [:y],
+  extra_args: [2],
+  code: &Kernel.*/2
+}
+```
+
+First, we have to define an id for the function. This id should be unique per graph. This is how we can reference this function when requesting its results and how the graph detects the dependencies between nodes and possible cycles.
+
+Secondly, the `:args` key must be intepreted together with `:extra_args`. By default, Handoff will concatenate `:args` and `:extra_args` to produce, in this case, `[:y, 2]`, the effective list of arguments to be passed to `:code`. The important take away is that `:extra_args` can be used to provide constant arguments that are known at the time the DAG is defined (i.e. don't depend on any results).
+
+Finally, `:code` contains the actual function to be invoked. It is always preferred to use named capture notation because anonymous functions don't work for remote code execution (Handoff can distribute a DAG across a cluster!). In this case, `& &1 * &2` or `fn x, y -> x * y end` would have worked just the same, because we are not running in a cluster.
+
+## Next Steps
+
+Now that you understand the basics of Handoff, you might want to explore:
+
+* [Distributed Execution](distributed_execution.md) - Execute your DAGs across multiple nodes
+* [Resource Management](resource_management.md) - Define and manage computational resources
+
+Additionally, below we dive deeper into using graphs.
+
+## Advanced: Interacting with the outside world
+
+Now let's make things more fun! In this example, instead of having 2 and 3 being fixed constants, we'll run each of those functions in a process and receive the multiplication constants via messages.
+
+```elixir
+defmodule Multiplier do
+  def multiply(x, caller, name) do
+    ref = make_ref()
+    send(caller, {ref, name, self()})
+    receive do
+      {:constant, ^ref, c} -> c * x
+    end
+  end
+end
+```
+
+The Multiplier module defined above receives a caller PID and sends a message to that PID, which contains the information necessary for the caller to then send another message with the actuall value for multiplication.
+
+```elixir
+dag = Handoff.new()
+
+x =
+  %Handoff.Function{
+    id: :x,
+    args: [],
+    code: &Elixir.Function.identity/1,
+    extra_args: [10]
+  }
+
+y =
+  %Handoff.Function{
+    id: :y,
+    args: [],
+    code: &Elixir.Function.identity/1,
+    extra_args: [20]
+  }
+
+times_x =
+  %Handoff.Function{
+    id: :times_x,
+    args: [:x],
+    extra_args: [self(), :x],
+    code: &Multiplier.multiply/3
+  }
+
+times_y =
+  %Handoff.Function{
+    id: :times_y,
+    args: [:y],
+    extra_args: [self(), :y],
+    code: &Multiplier.multiply/3
+  }
+
+add =
+  %Handoff.Function{
+    id: :add,
+    args: [:times_x, :times_y],
+    extra_args: [],
+    code: &Kernel.+/2
+  }
+
+dag =
+  dag
+  |> Handoff.DAG.add_function(x)
+  |> Handoff.DAG.add_function(y)
+  |> Handoff.DAG.add_function(times_x)
+  |> Handoff.DAG.add_function(times_y)
+  |> Handoff.DAG.add_function(add)
+
+t =
+  Task.async(fn ->
+    Handoff.execute(dag)
+  end)
+```
+
+Next, we'll receive the messages as they arrive and reply to the first one. `Task.yield` will return `nil` because the DAG is still running.
+
+```elixir
+receive do
+  {ref, :x, pid} -> send(pid, {:constant, ref, -1})
+  {ref, :y, pid} -> send(pid, {:constant, ref, 1})
+end
+Task.yield(t, 100)
+```
+
+If we run the same `receive` block again, will see now that the task does return with the results from the DAG.
+
+```elixir
+receive do
+  {ref, :x, pid} -> send(pid, {:constant, ref, -1})
+  {ref, :y, pid} -> send(pid, {:constant, ref, 1})
+end
+
+Task.await(t)
+```

@@ -6,7 +6,7 @@ This guide explains how to execute Handoff DAGs across multiple Elixir nodes for
 
 - A working Elixir cluster with connected nodes
 - Handoff installed on all nodes
-- Basic understanding of Handoff DAGs (see [Getting Started](getting_started.md))
+- Basic understanding of Handoff DAGs (see [Getting Started](getting_started.livemd))
 
 ## Setting Up Nodes
 
