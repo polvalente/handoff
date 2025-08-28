@@ -89,7 +89,7 @@ You can execute the DAG across your cluster. For demonstration, we'll run it loc
 Application.ensure_all_started(:handoff)
 
 # Register the local node with its capabilities
-Handoff.register_local_node(%{cpu: 4, memory: 8000})
+Handoff.register_node(Node.self(), %{cpu: 4, memory: 8000})
 
 # Execute the DAG
 distributed_result = Handoff.execute_distributed(dag)
@@ -101,4 +101,4 @@ IO.inspect(distributed_result, label: "Distributed Execution Result")
 
 - Demonstrated a branching DAG with Handoff
 - Showed how to construct, visualize, and execute the DAG in a distributed fashion
-- For more complex examples, see the distributed image processing Livebook 
+- For more complex examples, see the distributed image processing Livebook

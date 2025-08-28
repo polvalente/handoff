@@ -55,7 +55,18 @@ defmodule Handoff.SimpleResourceTracker do
   @impl GenServer
   def init(_opts) do
     table = :ets.new(@table_name, [:set, :protected, :named_table])
-    {:ok, %{table: table, nodes: %{}}}
+
+    {:ok,
+     %{
+       table: table,
+       nodes: %{},
+       # Track which process allocated which resources on which nodes
+       # %{pid => %{node => resource_requirements}}
+       process_allocations: %{},
+       # Track monitors for processes
+       # %{monitor_ref => pid}
+       monitors: %{}
+     }}
   end
 
   @impl GenServer
@@ -88,7 +99,7 @@ defmodule Handoff.SimpleResourceTracker do
   end
 
   @impl GenServer
-  def handle_call({:request, node, req}, _from, state) do
+  def handle_call({:request, node, req}, {from_pid, _tag}, state) do
     case Map.get(state.nodes, node) do
       nil ->
         {:reply, {:error, :resources_unavailable}, state}
@@ -103,9 +114,27 @@ defmodule Handoff.SimpleResourceTracker do
               %{node_info | used: new_used}
             end)
 
-          Logger.debug("Allocated resources on node #{inspect(node)}: #{inspect(req)}")
+          # Monitor the requesting process and track its allocation
+          {new_process_allocations, new_monitors} =
+            track_process_allocation(
+              from_pid,
+              node,
+              req,
+              state.process_allocations,
+              state.monitors
+            )
 
-          {:reply, :ok, %{state | nodes: nodes}}
+          Logger.debug(
+            "Allocated resources on node #{inspect(node)} to process #{inspect(from_pid)}: #{inspect(req)}"
+          )
+
+          {:reply, :ok,
+           %{
+             state
+             | nodes: nodes,
+               process_allocations: new_process_allocations,
+               monitors: new_monitors
+           }}
         else
           {:reply, {:error, :resources_unavailable}, state}
         end
@@ -113,7 +142,7 @@ defmodule Handoff.SimpleResourceTracker do
   end
 
   @impl GenServer
-  def handle_call({:release, node, req}, _from, state) do
+  def handle_call({:release, node, req}, {from_pid, _tag}, state) do
     case Map.get(state.nodes, node) do
       nil ->
         {:reply, :ok, state}
@@ -127,9 +156,27 @@ defmodule Handoff.SimpleResourceTracker do
             %{node_info | used: new_used}
           end)
 
-        Logger.debug("Released resources on node #{inspect(node)}: #{inspect(req)}")
+        # Clean up process allocation tracking
+        {new_process_allocations, new_monitors} =
+          untrack_process_allocation(
+            from_pid,
+            node,
+            req,
+            state.process_allocations,
+            state.monitors
+          )
 
-        {:reply, :ok, %{state | nodes: nodes}}
+        Logger.debug(
+          "Released resources on node #{inspect(node)} from process #{inspect(from_pid)}: #{inspect(req)}"
+        )
+
+        {:reply, :ok,
+         %{
+           state
+           | nodes: nodes,
+             process_allocations: new_process_allocations,
+             monitors: new_monitors
+         }}
     end
   end
 
@@ -143,6 +190,31 @@ defmodule Handoff.SimpleResourceTracker do
       %{full: full_caps} ->
         {:reply, full_caps, state}
     end
+  end
+
+  @impl GenServer
+  def handle_info({:DOWN, monitor_ref, :process, pid, reason}, state) do
+    Logger.info(
+      "Process #{inspect(pid)} died (#{inspect(reason)}), cleaning up its resource allocations"
+    )
+
+    # Clean up all resources allocated by this process
+    {new_nodes, new_process_allocations, new_monitors} =
+      cleanup_process_resources(
+        pid,
+        monitor_ref,
+        state.nodes,
+        state.process_allocations,
+        state.monitors
+      )
+
+    {:noreply,
+     %{
+       state
+       | nodes: new_nodes,
+         process_allocations: new_process_allocations,
+         monitors: new_monitors
+     }}
   end
 
   # Helper functions
@@ -167,5 +239,112 @@ defmodule Handoff.SimpleResourceTracker do
 
       Map.put(acc, resource, new_value)
     end)
+  end
+
+  defp track_process_allocation(pid, node, req, process_allocations, monitors) do
+    if Map.has_key?(process_allocations, pid) do
+      update_existing_allocation(pid, node, req, process_allocations, monitors)
+    else
+      start_monitoring_process(pid, node, req, process_allocations, monitors)
+    end
+  end
+
+  defp update_existing_allocation(pid, node, req, process_allocations, monitors) do
+    updated_allocations =
+      Map.update!(process_allocations, pid, fn node_allocations ->
+        Map.update(node_allocations, node, req, &merge_resource_requirements(&1, req))
+      end)
+
+    {updated_allocations, monitors}
+  end
+
+  defp start_monitoring_process(pid, node, req, process_allocations, monitors) do
+    monitor_ref = Process.monitor(pid)
+    new_process_allocations = Map.put(process_allocations, pid, %{node => req})
+    new_monitors = Map.put(monitors, monitor_ref, pid)
+    {new_process_allocations, new_monitors}
+  end
+
+  defp merge_resource_requirements(existing_req, new_req) do
+    Map.merge(existing_req, new_req, fn _key, v1, v2 -> v1 + v2 end)
+  end
+
+  defp untrack_process_allocation(pid, node, req, process_allocations, monitors) do
+    with {:ok, node_allocations} <- Map.fetch(process_allocations, pid),
+         {:ok, existing_req} <- Map.fetch(node_allocations, node) do
+      # Subtract the released resources
+      new_req = Map.merge(existing_req, req, fn _key, v1, v2 -> max(0, v1 - v2) end)
+
+      # Remove zero allocations
+      cleaned_req = new_req |> Enum.reject(fn {_resource, amount} -> amount == 0 end) |> Map.new()
+
+      if map_size(cleaned_req) == 0 do
+        # No more allocations on this node
+        updated_node_allocations = Map.delete(node_allocations, node)
+
+        if map_size(updated_node_allocations) == 0 do
+          # No more allocations for this process, stop monitoring
+          stop_monitoring_process(pid, process_allocations, monitors)
+        else
+          # Still has allocations on other nodes
+          new_process_allocations =
+            Map.put(process_allocations, pid, updated_node_allocations)
+
+          {new_process_allocations, monitors}
+        end
+      else
+        # Still has allocations on this node
+        updated_node_allocations = Map.put(node_allocations, node, cleaned_req)
+        new_process_allocations = Map.put(process_allocations, pid, updated_node_allocations)
+        {new_process_allocations, monitors}
+      end
+    else
+      :error ->
+        # Process not tracked or no allocations on this node, nothing to clean up
+        {process_allocations, monitors}
+    end
+  end
+
+  defp cleanup_process_resources(pid, monitor_ref, nodes, process_allocations, monitors) do
+    case Map.get(process_allocations, pid) do
+      nil ->
+        # Process had no allocations, just clean up the monitor
+        new_monitors = Map.delete(monitors, monitor_ref)
+        {nodes, process_allocations, new_monitors}
+
+      node_allocations ->
+        Logger.info(
+          "Releasing resources for dead process #{inspect(pid)}: #{inspect(node_allocations)}"
+        )
+
+        # Release all resources allocated by this process
+        new_nodes =
+          Enum.reduce(node_allocations, nodes, fn {node, req}, acc_nodes ->
+            case Map.get(acc_nodes, node) do
+              nil ->
+                acc_nodes
+
+              %{used: used} = node_info ->
+                new_used = update_used_resources(used, req, :remove)
+                Map.put(acc_nodes, node, %{node_info | used: new_used})
+            end
+          end)
+
+        # Clean up tracking
+        new_process_allocations = Map.delete(process_allocations, pid)
+        new_monitors = Map.delete(monitors, monitor_ref)
+
+        {new_nodes, new_process_allocations, new_monitors}
+    end
+  end
+
+  defp stop_monitoring_process(pid, process_allocations, monitors) do
+    # Find and remove the monitor for this process
+    {monitor_ref, _pid} = Enum.find(monitors, fn {_ref, p} -> p == pid end) || {nil, nil}
+    if monitor_ref, do: Process.demonitor(monitor_ref)
+
+    new_process_allocations = Map.delete(process_allocations, pid)
+    new_monitors = Map.delete(monitors, monitor_ref)
+    {new_process_allocations, new_monitors}
   end
 end

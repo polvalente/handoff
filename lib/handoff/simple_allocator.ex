@@ -57,17 +57,25 @@ defmodule Handoff.SimpleAllocator do
         _ -> false
       end)
 
+    {pinned_functions, remapped_collocations_pinned, to_collocate_functions} =
+      merge_collocated_costs(pinned_functions, collocated_functions)
+
+    {dynamic_functions, remapped_collocations_dynamic, []} =
+      merge_collocated_costs(dynamic_functions, to_collocate_functions)
+
+    collocated_functions = remapped_collocations_pinned ++ remapped_collocations_dynamic
+
     # Process pinned functions first
-    {pinned_assignments, pinned_resources} =
+    {pinned_assignments, available_resources_after_pinning} =
       perform_pinned_allocation(pinned_functions, %{}, initial_available_resources)
 
     # Process remaining (dynamic) functions
-    {dynamic_assignments_map, dynamic_resources, _dynamic_nodes} =
+    {dynamic_assignments_map, available_resources_after_dynamic_allocation, _dynamic_nodes} =
       Enum.reduce(
         # Use functions not already pinned
         dynamic_functions,
         # Start with results from pinned
-        {pinned_assignments, pinned_resources, nodes},
+        {pinned_assignments, available_resources_after_pinning, nodes},
         fn
           %Function{id: id, cost: cost},
           {current_assignments, available_resources, current_nodes_list} ->
@@ -94,7 +102,10 @@ defmodule Handoff.SimpleAllocator do
         target_node = Map.get(dynamic_assignments_map, target_id)
         %{function | node: target_node}
       end)
-      |> perform_pinned_allocation(dynamic_assignments_map, dynamic_resources)
+      |> perform_pinned_allocation(
+        dynamic_assignments_map,
+        available_resources_after_dynamic_allocation
+      )
 
     final_assignments_map
   end
@@ -186,6 +197,102 @@ defmodule Handoff.SimpleAllocator do
       result = max(0, node_resource - function_cost)
 
       {key, result}
+    end)
+  end
+
+  defp merge_collocated_costs([], collocated_functions) do
+    {[], [], collocated_functions}
+  end
+
+  defp merge_collocated_costs(functions, []) do
+    {functions, [], []}
+  end
+
+  defp merge_collocated_costs(functions, collocated_functions) do
+    g = build_collocation_graph(functions, collocated_functions)
+    collocated_by_target = extract_collocation_components(g)
+
+    updated_functions = merge_costs_into_functions(functions, collocated_by_target)
+    remapped_collocations = build_remapping_table(collocated_by_target)
+
+    {remapped, to_collocate} =
+      partition_collocated_functions(collocated_functions, remapped_collocations)
+
+    {updated_functions, remapped, to_collocate}
+  end
+
+  defp build_collocation_graph(functions, collocated_functions) do
+    g = :digraph.new()
+
+    # Add root vertices for all functions
+    for %{id: id} <- functions do
+      :digraph.add_vertex(g, id, :root)
+    end
+
+    # Add collocated functions and their edges
+    for %{id: id, node: {:collocated, target_id}, cost: cost} <- collocated_functions do
+      add_vertex_if_missing(g, id, cost)
+      add_vertex_if_missing(g, target_id, cost)
+      :digraph.add_edge(g, id, target_id)
+    end
+
+    g
+  end
+
+  defp add_vertex_if_missing(graph, vertex_id, cost) do
+    if !:digraph.vertex(graph, vertex_id) do
+      :digraph.add_vertex(graph, vertex_id, cost)
+    end
+  end
+
+  defp extract_collocation_components(graph) do
+    for component <- :digraph_utils.components(graph), into: %{} do
+      {[{root_id, :root}], collocations} =
+        component
+        |> Enum.map(&:digraph.vertex(graph, &1))
+        |> Enum.split_with(fn {_, label} -> label == :root end)
+
+      {root_id, collocations}
+    end
+  end
+
+  defp merge_costs_into_functions(functions, collocated_by_target) do
+    Enum.map(functions, fn %{id: id, cost: cost} = function ->
+      case Map.get(collocated_by_target, id) do
+        nil -> function
+        collocations -> %{function | cost: calculate_merged_cost(cost, collocations)}
+      end
+    end)
+  end
+
+  defp calculate_merged_cost(base_cost, collocations) do
+    Enum.reduce(collocations, base_cost || %{}, fn {_id, cost}, acc ->
+      merge_cost_if_present(acc, cost)
+    end)
+  end
+
+  defp merge_cost_if_present(acc, nil), do: acc
+
+  defp merge_cost_if_present(acc, cost) do
+    Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
+  end
+
+  defp build_remapping_table(collocated_by_target) do
+    collocated_by_target
+    |> Enum.flat_map(fn {id, collocations} ->
+      Enum.map(collocations, fn {collocated_id, _cost} ->
+        {collocated_id, id}
+      end)
+    end)
+    |> Map.new()
+  end
+
+  defp partition_collocated_functions(collocated_functions, remapped_collocations) do
+    Enum.reduce(collocated_functions, {[], []}, fn f, {remapped, to_collocate} ->
+      case Map.get(remapped_collocations, f.id) do
+        nil -> {remapped, [f | to_collocate]}
+        target_id -> {[%{f | node: {:collocated, target_id}, cost: nil} | remapped], to_collocate}
+      end
     end)
   end
 end

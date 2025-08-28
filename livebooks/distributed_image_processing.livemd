@@ -425,7 +425,7 @@ defmodule DistributedImageProcessing do
     # Register the local node with capabilities
     # In a real multi-node setup, each node would do this.
     local_node_caps = %{cpu: 8, memory: 16000, gpu: 1}
-    DistributedExecutor.register_local_node(local_node_caps)
+    Handoff.register_node(Node.self(), local_node_caps)
     Logger.info("Registered local node with capabilities: #{inspect(local_node_caps)}")
 
     # Discover other nodes in the cluster (optional, but good for distributed runs)

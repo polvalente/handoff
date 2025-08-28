@@ -31,16 +31,6 @@ defmodule Handoff.DistributedExecutor do
   end
 
   @doc """
-  Registers the local node with its capabilities and makes it available for function execution.
-
-  ## Parameters
-  - caps: Map of capabilities provided by this node (e.g., %{cpu: 8, memory: 4000})
-  """
-  def register_local_node(caps) do
-    GenServer.call(__MODULE__, {:register_local_node, caps})
-  end
-
-  @doc """
   Executes the DAG across the distributed nodes.
 
   ## Parameters
@@ -110,17 +100,6 @@ defmodule Handoff.DistributedExecutor do
   end
 
   @impl true
-  def handle_call({:register_local_node, caps}, _from, state) do
-    # Register local node with the resource tracker
-    :ok = SimpleResourceTracker.register(Node.self(), caps)
-
-    # Update state with local node capabilities
-    nodes = Map.put(state.nodes, Node.self(), caps)
-
-    {:reply, :ok, %{state | nodes: nodes}}
-  end
-
-  @impl true
   def handle_call({:execute, dag, _opts}, from, state) do
     # Clear any previous results for this DAG
     ResultStore.clear(dag.id)
@@ -171,7 +150,7 @@ defmodule Handoff.DistributedExecutor do
             GenServer.reply(from, {:error, {:allocation_error, e.message}})
 
           exception ->
-            GenServer.reply(from, {:error, exception})
+            GenServer.reply(from, {:exception, exception, __STACKTRACE__})
         end
       end)
 
@@ -253,26 +232,29 @@ defmodule Handoff.DistributedExecutor do
     node_caps =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
         case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
-          {:badrpc, _} -> acc
-          caps when is_map(caps) -> Map.put(acc, node, caps)
+          {:badrpc, _} ->
+            acc
+
+          caps when is_map(caps) ->
+            Map.put(acc, node, caps)
         end
       end)
 
-    # Allocate functions to nodes
-    allocations = allocate_functions(dag, node_caps)
-
-    # Update dag functions with node assignments
-    dag = assign_nodes_to_functions(dag, allocations)
-
-    # Execute functions in topological order
-    topo_sorted = topological_sort(dag)
-
-    # Track function dependencies and completion
-    to_be_executed = MapSet.new(topo_sorted)
-    executed = %{}
-    pending = MapSet.new()
-
     try do
+      # Allocate functions to nodes - this may raise AllocationError
+      allocations = allocate_functions(dag, node_caps)
+
+      # Update dag functions with node assignments
+      dag = assign_nodes_to_functions(dag, allocations)
+
+      # Execute functions in topological order
+      topo_sorted = topological_sort(dag)
+
+      # Track function dependencies and completion
+      to_be_executed = MapSet.new(topo_sorted)
+      executed = %{}
+      pending = MapSet.new()
+
       results =
         execute_functions_with_deps(
           dag,
@@ -282,27 +264,15 @@ defmodule Handoff.DistributedExecutor do
           max_retries
         )
 
-      # Check if any function failed due to resource constraints
-      resource_errors =
-        Enum.filter(results, fn {_id, result} ->
-          case result do
-            {:error, %RuntimeError{message: message}} ->
-              String.contains?(message, "Resources unavailable")
-
-            _ ->
-              false
-          end
-        end)
-
-      if Enum.empty?(resource_errors) do
-        GenServer.reply(
-          caller,
-          {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
-        )
-      else
-        # If any function failed due to resource constraints, return error
-        GenServer.reply(caller, {:error, "Resource constraints not satisfied"})
-      end
+      # All functions executed successfully (AllocationError exceptions would have bubbled up)
+      GenServer.reply(
+        caller,
+        {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
+      )
+    rescue
+      e in [AllocationError] ->
+        Logger.error("Allocation error during DAG execution: #{e.message}")
+        GenServer.reply(caller, {:error, {:allocation_error, e.message}})
     catch
       err ->
         GenServer.reply(caller, {:error, err})
@@ -483,9 +453,9 @@ defmodule Handoff.DistributedExecutor do
       {:ok, result}
     else
       {:error, :resources_unavailable} ->
-        {:error,
-         {:allocation_error,
-          "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"}}
+        # Raise allocation error for early termination
+        raise AllocationError,
+              "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
@@ -502,9 +472,14 @@ defmodule Handoff.DistributedExecutor do
         )
 
       {:error, reason} ->
-        raise "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
+        {:error,
+         "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"}
     end
   rescue
+    e in [AllocationError] ->
+      # Don't retry allocation errors, let them bubble up to terminate DAG execution
+      reraise e, __STACKTRACE__
+
     e ->
       if current_retry < max_retries do
         Logger.warning(
@@ -520,7 +495,7 @@ defmodule Handoff.DistributedExecutor do
           current_retry + 1
         )
       else
-        reraise e, __STACKTRACE__
+        {:error, "Function #{inspect(function.id)} failed with exception: #{inspect(e)}"}
       end
   end
 
@@ -639,6 +614,7 @@ defmodule Handoff.DistributedExecutor do
       dag.functions
       |> Map.values()
       |> Enum.filter(fn func -> func.type == :regular end)
+      |> Enum.sort_by(fn func -> func.id end)
 
     # Use SimpleAllocator to get node assignments for regular functions
     Handoff.SimpleAllocator.allocate(regular_functions, node_caps)

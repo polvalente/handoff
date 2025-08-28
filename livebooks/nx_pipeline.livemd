@@ -51,11 +51,11 @@ defmodule NxRunner do
   end
 end
 
-expr = Nx.Defn.debug_expr(&NxRunner.my_function/2).(Nx.template({10}, :f32), 1)
+expr = Nx.Defn.debug_expr(&NxRunner.my_function/2).(Nx.template({10}, :f32), Nx.template({10}, :s64))
 ```
 
 ```elixir
-nx_graph = Nx.Defn.Graph.split(expr, fn %{data: %{op: op}} -> op == :add end)
+nx_graph = Nx.Defn.Graph.split(expr, fn %{data: %{op: op}} -> if(op == :add, do: :before, else: :none) end)
 ```
 
 ```elixir
@@ -64,7 +64,7 @@ args =
     id: :arguments,
     args: [],
     code: &Function.identity/1,
-    extra_args: [{Nx.iota({10}, type: :f32), 1}],
+    extra_args: [{Nx.iota({10}, type: :f32), Nx.iota({10}, type: :s64)}],
     type: :inline
   }
 

@@ -119,7 +119,7 @@ end
 
 # Register the local node with some default capabilities for local execution
 # This allows DistributedExecutor to find and use the current node.
-Handoff.DistributedExecutor.register_local_node(%{cpu: 2, memory: 1024, gpu: 0})
+Handoff.register_node(Node.self(), %{cpu: 2, memory: 1024, gpu: 0})
 IO.puts "Local node registered with Handoff."
 
 # Create a new DAG

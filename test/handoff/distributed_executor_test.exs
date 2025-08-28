@@ -9,10 +9,14 @@ defmodule Handoff.DistributedExecutorTest do
   alias Handoff.SimpleResourceTracker
 
   setup do
-    # Register local node with some capabilities
+    # Register local node with some capabilities and reset any used resources
     [node_2 | _] = Application.get_env(:handoff, :test_nodes)
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
     :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000}])
+
+    # Also ensure the local tracker knows about the remote node's fresh capabilities
+    SimpleResourceTracker.register(node_2, %{cpu: 4, memory: 2000})
+
     %{node_2: node_2}
   end
 
@@ -331,7 +335,10 @@ defmodule Handoff.DistributedExecutorTest do
   test "fails when resource constraints not satisfied" do
     dag = DAG.new(self())
 
-    for {node_a, node_b} <- [{Node.self(), Node.self()}, {Node.self(), {:collocated, :task_A}}] do
+    for {node_a, node_b, task_that_fails} <- [
+          {Node.self(), Node.self(), :task_B},
+          {Node.self(), {:collocated, :task_A}, :task_A}
+        ] do
       dag_with_functions =
         dag
         |> DAG.add_function(%Function{
@@ -359,7 +366,7 @@ defmodule Handoff.DistributedExecutorTest do
 
       assert {:error,
               {:allocation_error,
-               "Insufficient resources on node :\"primary@127.0.0.1\" for function :task_B"}} ==
+               "Insufficient resources on node #{inspect(Node.self())} for function #{inspect(task_that_fails)}"}} ==
                DistributedExecutor.execute(dag_with_functions, opts)
     end
   end
@@ -415,6 +422,86 @@ defmodule Handoff.DistributedExecutorTest do
 
       assert returned_dag_id == small_dag.id
       assert Map.get(actual_results, :small_resource) == 42
+    end
+
+    test "merges collocated costs" do
+      [node_2 | _] = Application.get_env(:handoff, :test_nodes)
+      SimpleResourceTracker.register(Node.self(), %{cpu: 4})
+      :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 0}])
+
+      dag =
+        1..4
+        |> Enum.reduce(DAG.new(), fn
+          1, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :f1,
+                code: &Elixir.Function.identity/1,
+                args: [],
+                extra_args: [42],
+                cost: %{cpu: 1},
+                node: Node.self()
+              }
+            )
+
+          i, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :"f#{i}",
+                code: &Elixir.Function.identity/1,
+                args: [:"f#{i - 1}"],
+                extra_args: [],
+                cost: %{cpu: 1},
+                node: {:collocated, :"f#{i - 1}"}
+              }
+            )
+        end)
+        |> DAG.add_function(%Function{
+          id: :f5,
+          code: &Elixir.Function.identity/1,
+          args: [],
+          extra_args: [1337],
+          cost: %{cpu: 0}
+        })
+
+      assert {:ok, %{allocations: allocations}} = DistributedExecutor.execute(dag)
+      assert Enum.all?(allocations, fn {_, value} -> value == Node.self() end)
+
+      dag =
+        Enum.reduce(1..4, DAG.new(), fn
+          1, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :f1,
+                code: &Elixir.Function.identity/1,
+                args: [],
+                extra_args: [42],
+                cost: %{cpu: 1},
+                node: node_2
+              }
+            )
+
+          i, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :"f#{i}",
+                code: &Elixir.Function.identity/1,
+                args: [:"f#{i - 1}"],
+                extra_args: [],
+                cost: %{cpu: 1},
+                node: {:collocated, :f1}
+              }
+            )
+        end)
+
+      assert {:error,
+              {:allocation_error,
+               "Insufficient resources on node #{inspect(node_2)} for function :f1"}} ==
+               DistributedExecutor.execute(dag)
     end
   end
 
@@ -750,8 +837,10 @@ defmodule Handoff.DistributedExecutorTest do
           extra_args: ["An error occurred"]
         })
 
-      {:error, %RuntimeError{message: "An error occurred, value: 1"}} =
+      {:ok, %{results: %{error: {:error, error_message}}}} =
         DistributedExecutor.execute(dag_with_functions)
+
+      assert String.contains?(error_message, "An error occurred, value: 1")
     end
 
     test "rejects invalid DAGs (validation happens before execution)" do
