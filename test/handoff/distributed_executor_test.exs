@@ -331,7 +331,10 @@ defmodule Handoff.DistributedExecutorTest do
   test "fails when resource constraints not satisfied" do
     dag = DAG.new(self())
 
-    for {node_a, node_b} <- [{Node.self(), Node.self()}, {Node.self(), {:collocated, :task_A}}] do
+    for {node_a, node_b, task_that_fails} <- [
+          {Node.self(), Node.self(), :task_B},
+          {Node.self(), {:collocated, :task_A}, :task_A}
+        ] do
       dag_with_functions =
         dag
         |> DAG.add_function(%Function{
@@ -359,7 +362,7 @@ defmodule Handoff.DistributedExecutorTest do
 
       assert {:error,
               {:allocation_error,
-               "Insufficient resources on node :\"primary@127.0.0.1\" for function :task_B"}} ==
+               "Insufficient resources on node #{inspect(Node.self())} for function #{inspect(task_that_fails)}"}} ==
                DistributedExecutor.execute(dag_with_functions, opts)
     end
   end
@@ -446,10 +449,17 @@ defmodule Handoff.DistributedExecutorTest do
                 args: [:"f#{i - 1}"],
                 extra_args: [],
                 cost: %{cpu: 1},
-                node: {:collocated, :f1}
+                node: {:collocated, :"f#{i - 1}"}
               }
             )
         end)
+        |> DAG.add_function(%Function{
+          id: :f5,
+          code: &Elixir.Function.identity/1,
+          args: [],
+          extra_args: [1337],
+          cost: %{cpu: 0}
+        })
 
       assert {:ok, %{allocations: allocations}} = DistributedExecutor.execute(dag)
       assert Enum.all?(allocations, fn {_, value} -> value == Node.self() end)
@@ -822,8 +832,10 @@ defmodule Handoff.DistributedExecutorTest do
           extra_args: ["An error occurred"]
         })
 
-      {:error, %RuntimeError{message: "An error occurred, value: 1"}} =
+      {:ok, %{results: %{error: {:error, error_message}}}} =
         DistributedExecutor.execute(dag_with_functions)
+
+      assert String.contains?(error_message, "An error occurred, value: 1")
     end
 
     test "rejects invalid DAGs (validation happens before execution)" do

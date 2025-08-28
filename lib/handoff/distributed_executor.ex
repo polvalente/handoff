@@ -171,7 +171,7 @@ defmodule Handoff.DistributedExecutor do
             GenServer.reply(from, {:error, {:allocation_error, e.message}})
 
           exception ->
-            GenServer.reply(from, {:error, exception})
+            GenServer.reply(from, {:exception, exception, __STACKTRACE__})
         end
       end)
 
@@ -261,51 +261,68 @@ defmodule Handoff.DistributedExecutor do
         end
       end)
 
-    # Allocate functions to nodes
-    allocations = allocate_functions(dag, node_caps)
-
-    # Update dag functions with node assignments
-    dag = assign_nodes_to_functions(dag, allocations)
-
-    # Execute functions in topological order
-    topo_sorted = topological_sort(dag)
-
-    # Track function dependencies and completion
-    to_be_executed = MapSet.new(topo_sorted)
-    executed = %{}
-    pending = MapSet.new()
-
     try do
-      results =
-        execute_functions_with_deps(
-          dag,
-          to_be_executed,
-          executed,
-          pending,
-          max_retries
-        )
+      # Allocate functions to nodes - this may raise AllocationError
+      allocations = allocate_functions(dag, node_caps)
 
-      # Check if any function failed due to resource constraints
-      resource_errors =
-        Enum.filter(results, fn {_id, result} ->
-          case result do
-            {:error, %RuntimeError{message: message}} ->
-              String.contains?(message, "Resources unavailable")
+      # Update dag functions with node assignments
+      dag = assign_nodes_to_functions(dag, allocations)
 
-            _ ->
-              false
-          end
-        end)
+      # Execute functions in topological order
+      topo_sorted = topological_sort(dag)
 
-      if Enum.empty?(resource_errors) do
-        GenServer.reply(
-          caller,
-          {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
-        )
-      else
-        # If any function failed due to resource constraints, return error
-        GenServer.reply(caller, {:error, "Resource constraints not satisfied"})
+      # Track function dependencies and completion
+      to_be_executed = MapSet.new(topo_sorted)
+      executed = %{}
+      pending = MapSet.new()
+
+      try do
+        results =
+          execute_functions_with_deps(
+            dag,
+            to_be_executed,
+            executed,
+            pending,
+            max_retries
+          )
+
+        # Check if any function failed due to resource constraints
+        resource_errors =
+          Enum.filter(results, fn {_id, result} ->
+            case result do
+              {:error, {:allocation_error, _}} ->
+                true
+
+              _ ->
+                false
+            end
+          end)
+
+        if Enum.empty?(resource_errors) do
+          GenServer.reply(
+            caller,
+            {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
+          )
+        else
+          # If any function failed due to resource constraints, return unified error
+          GenServer.reply(
+            caller,
+            {:error, {:allocation_error, "Resource constraints not satisfied"}}
+          )
+        end
+      catch
+        {:allocation_error, message} ->
+          # Clean up all resources for this DAG and return error
+          cleanup_dag_resources(dag, allocations)
+          GenServer.reply(caller, {:error, {:allocation_error, message}})
+      after
+        # Always clean up all resources for this DAG when execution ends
+        cleanup_dag_resources(dag, allocations)
       end
+    rescue
+      e in [AllocationError] ->
+        Logger.error("Allocation failed during initial allocation: #{e.message}")
+        GenServer.reply(caller, {:error, {:allocation_error, e.message}})
     catch
       err ->
         GenServer.reply(caller, {:error, err})
@@ -465,7 +482,21 @@ defmodule Handoff.DistributedExecutor do
 
         {:error, reason} ->
           Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
-          executed_acc = Map.put(executed_acc, function_id, {:error, reason})
+          # Convert error to unified format if it's a resource constraint
+          unified_error =
+            case reason do
+              "Failed to execute function " <> _ ->
+                if String.contains?(reason, "Resources unavailable") do
+                  {:allocation_error, reason}
+                else
+                  reason
+                end
+
+              _ ->
+                reason
+            end
+
+          executed_acc = Map.put(executed_acc, function_id, {:error, unified_error})
           to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
           {pending_acc, to_be_executed_acc, executed_acc}
       end
@@ -486,9 +517,11 @@ defmodule Handoff.DistributedExecutor do
       {:ok, result}
     else
       {:error, :resources_unavailable} ->
-        {:error,
-         {:allocation_error,
-          "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"}}
+        # Throw allocation error for early termination
+        throw(
+          {:allocation_error,
+           "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"}
+        )
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
@@ -505,7 +538,8 @@ defmodule Handoff.DistributedExecutor do
         )
 
       {:error, reason} ->
-        raise "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"
+        {:error,
+         "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"}
     end
   rescue
     e ->
@@ -523,7 +557,7 @@ defmodule Handoff.DistributedExecutor do
           current_retry + 1
         )
       else
-        reraise e, __STACKTRACE__
+        {:error, "Function #{inspect(function.id)} failed with exception: #{inspect(e)}"}
       end
   end
 
@@ -544,6 +578,24 @@ defmodule Handoff.DistributedExecutor do
     end
 
     :ok
+  end
+
+  defp cleanup_dag_resources(dag, allocations) do
+    # Release resources for all functions in the DAG based on their allocations and costs
+    Enum.each(allocations, fn {function_id, node} ->
+      case Map.get(dag.functions, function_id) do
+        %{cost: cost} when not is_nil(cost) ->
+          Logger.info(
+            "Releasing resources for function #{inspect(function_id)} on node #{inspect(node)}: #{inspect(cost)}"
+          )
+
+          SimpleResourceTracker.release(node, cost)
+
+        _ ->
+          # Function has no cost, nothing to release
+          :ok
+      end
+    end)
   end
 
   defp execute_with_node_type(dag_id, function, args, all_dag_functions) do
@@ -642,6 +694,7 @@ defmodule Handoff.DistributedExecutor do
       dag.functions
       |> Map.values()
       |> Enum.filter(fn func -> func.type == :regular end)
+      |> Enum.sort_by(fn func -> func.id end)
 
     # Use SimpleAllocator to get node assignments for regular functions
     Handoff.SimpleAllocator.allocate(regular_functions, node_caps)

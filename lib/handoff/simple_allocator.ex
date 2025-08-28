@@ -57,9 +57,13 @@ defmodule Handoff.SimpleAllocator do
         _ -> false
       end)
 
-    pinned_functions = merge_collocated_costs(pinned_functions, collocated_functions)
-    dynamic_functions = merge_collocated_costs(dynamic_functions, collocated_functions)
-    collocated_functions = put_in(collocated_functions, [Access.all(), Access.key(:cost)], nil)
+    {pinned_functions, remapped_collocations_pinned, to_collocate_functions} =
+      merge_collocated_costs(pinned_functions, collocated_functions)
+
+    {dynamic_functions, remapped_collocations_dynamic, []} =
+      merge_collocated_costs(dynamic_functions, to_collocate_functions)
+
+    collocated_functions = remapped_collocations_pinned ++ remapped_collocations_dynamic
 
     # Process pinned functions first
     {pinned_assignments, available_resources_after_pinning} =
@@ -196,25 +200,84 @@ defmodule Handoff.SimpleAllocator do
     end)
   end
 
-  defp merge_collocated_costs(functions, collocated_functions) do
-    collocated_by_target =
-      Enum.group_by(
-        collocated_functions,
-        fn %{node: {:collocated, target_id}} -> target_id end,
-        fn %{cost: cost} -> cost end
-      )
+  defp merge_collocated_costs([], collocated_functions) do
+    {[], [], collocated_functions}
+  end
 
-    Enum.map(functions, fn %{id: id, cost: cost} = function ->
-      if collocations = Map.get(collocated_by_target, id) do
-        cost =
-          Enum.reduce(collocations, cost, fn cost, acc ->
-            Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
+  defp merge_collocated_costs(functions, []) do
+    {functions, [], []}
+  end
+
+  defp merge_collocated_costs(functions, collocated_functions) do
+    g = :digraph.new()
+
+    for %{id: id} <- functions do
+      :digraph.add_vertex(g, id, :root)
+    end
+
+    dbg(functions)
+    dbg(collocated_functions)
+
+    for %{id: id, node: {:collocated, target_id}, cost: cost} <- collocated_functions do
+      if !:digraph.vertex(g, id) do
+        :digraph.add_vertex(g, id, cost)
+      end
+
+      if !:digraph.vertex(g, target_id) do
+        :digraph.add_vertex(g, target_id, cost)
+      end
+
+      :digraph.add_edge(g, id, target_id)
+    end
+
+    collocated_by_target =
+      for component <- :digraph_utils.components(g), into: %{} do
+        {[{root_id, :root}], collocations} =
+          component
+          |> Enum.map(&:digraph.vertex(g, &1))
+          |> Enum.split_with(fn {_, label} ->
+            label == :root
           end)
 
-        %{function | cost: cost}
-      else
-        function
+        {root_id, collocations}
       end
-    end)
+
+    functions =
+      Enum.map(functions, fn %{id: id, cost: cost} = function ->
+        if collocations = Map.get(collocated_by_target, id) do
+          cost =
+            Enum.reduce(collocations, cost || %{}, fn {_id, cost}, acc ->
+              if cost do
+                Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
+              else
+                acc
+              end
+            end)
+
+          %{function | cost: cost}
+        else
+          function
+        end
+      end)
+
+    remapped_collocations =
+      collocated_by_target
+      |> Enum.flat_map(fn {id, collocations} ->
+        Enum.map(collocations, fn {collocated_id, _cost} ->
+          {collocated_id, id}
+        end)
+      end)
+      |> Map.new()
+
+    {remapped, to_collocate} =
+      Enum.reduce(collocated_functions, {[], []}, fn f, {l, r} ->
+        if target_id = remapped_collocations[f.id] do
+          {[%{f | node: {:collocated, target_id}, cost: nil} | l], r}
+        else
+          {l, [f | r]}
+        end
+      end)
+
+    {functions, remapped, to_collocate}
   end
 end
