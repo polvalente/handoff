@@ -15,10 +15,9 @@ defmodule Handoff.Supervisor do
 
   @impl true
   def init(opts) do
-    # Read resource_tracker from application config, with fallback to opts for backward compatibility
     resource_tracker =
-      Application.get_env(:handoff, :resource_tracker) ||
-        Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
+      Keyword.get(opts, :resource_tracker) ||
+        Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
 
     children = [
       {Handoff.ResultStore, []},

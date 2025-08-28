@@ -30,7 +30,6 @@ defmodule Handoff do
   Returns the supervisor pid and the resource tracker pid or name.
   """
   def start(opts \\ []) do
-    # Get resource_tracker from application config, with fallback to opts for backward compatibility
     resource_tracker =
       Keyword.get(opts, :resource_tracker) ||
         Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
