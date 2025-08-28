@@ -16,10 +16,37 @@ defmodule Handoff do
   @doc """
   Starts the Handoff supervision tree.
 
+  The resource tracker can be configured via application config:
+  ```
+  config :handoff, resource_tracker: MyResourceTracker
+  ```
+
+  Or overridden via opts for backward compatibility:
+  ```
+  Handoff.start(resource_tracker: MyResourceTracker)
+  ```
+
   Must be called before executing any DAGs.
+  Returns the supervisor pid and the resource tracker pid or name.
   """
   def start(opts \\ []) do
-    Handoff.Supervisor.start_link(opts)
+    resource_tracker =
+      Keyword.get(opts, :resource_tracker) ||
+        Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
+
+    tracker =
+      case resource_tracker do
+        mod when is_atom(mod) ->
+          # Start the tracker if it's a module
+          {:ok, pid} = mod.start_link([])
+          pid
+
+        pid when is_pid(pid) or is_atom(pid) ->
+          pid
+      end
+
+    {:ok, sup_pid} = Handoff.Supervisor.start_link(Keyword.put(opts, :resource_tracker, tracker))
+    {:ok, sup_pid, tracker}
   end
 
   @doc """
@@ -89,22 +116,31 @@ defmodule Handoff do
   For remote nodes, makes an RPC call to register on the remote node.
 
   ## Parameters
+  - tracker: The resource tracker pid or name (optional, defaults to application config)
   - node: The node to register
   - caps: Map of capabilities/resources the node provides
 
-  ## Example
+  ## Examples
   ```
+  # Using default tracker from application config
   Handoff.register_node(Node.self(), %{cpu: 4, memory: 8000})
+
+  # Using specific tracker
+  Handoff.register_node(tracker, Node.self(), %{cpu: 4, memory: 8000})
   ```
   """
   def register_node(node, caps) do
+    register_node(get_resource_tracker(), node, caps)
+  end
+
+  def register_node(tracker, node, caps) do
     if node == Node.self() do
       # Local node: register directly with the resource tracker
       # The DistributedExecutor will discover this node through its discovery process
-      Handoff.SimpleResourceTracker.register(node, caps)
+      tracker.register(node, caps)
     else
       # Remote node: use RPC to register on the remote node
-      case :rpc.call(node, Handoff.SimpleResourceTracker, :register, [node, caps]) do
+      case :rpc.call(node, tracker, :register, [node, caps]) do
         {:badrpc, reason} ->
           {:error, {:rpc_failed, reason}}
 
@@ -131,6 +167,7 @@ defmodule Handoff do
   For remote nodes, makes an RPC call to check on the remote node directly.
 
   ## Parameters
+  - tracker: The resource tracker pid or name (optional, defaults to application config)
   - node: The node to check
   - req: Map of resource requirements to check
 
@@ -138,18 +175,26 @@ defmodule Handoff do
   - true if resources are available
   - false otherwise
 
-  ## Example
+  ## Examples
   ```
+  # Using default tracker from application config
   Handoff.resources_available?(Node.self(), %{cpu: 2, memory: 4000})
+
+  # Using specific tracker
+  Handoff.resources_available?(Handoff.SimpleResourceTracker, Node.self(), %{cpu: 2, memory: 4000})
   ```
   """
   def resources_available?(node, req) do
+    resources_available?(get_resource_tracker(), node, req)
+  end
+
+  def resources_available?(tracker, node, req) do
     if node == Node.self() do
       # Local node: check directly
-      Handoff.SimpleResourceTracker.available?(node, req)
+      tracker.available?(node, req)
     else
       # Remote node: use RPC to check on the source node
-      case :rpc.call(node, Handoff.SimpleResourceTracker, :available?, [node, req]) do
+      case :rpc.call(node, tracker, :available?, [node, req]) do
         {:badrpc, _reason} ->
           false
 
@@ -257,5 +302,9 @@ defmodule Handoff do
   """
   def lookup_data_location(dag_id, data_id) do
     Handoff.DataLocationRegistry.lookup(dag_id, data_id)
+  end
+
+  defp get_resource_tracker do
+    Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
   end
 end

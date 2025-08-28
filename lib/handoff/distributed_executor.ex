@@ -54,6 +54,7 @@ defmodule Handoff.DistributedExecutor do
   def init(opts) do
     # Get connection settings from options
     heartbeat_interval = Keyword.get(opts, :heartbeat_interval, 5000)
+    resource_tracker = Keyword.get(opts, :resource_tracker, SimpleResourceTracker)
 
     # Schedule periodic heartbeat
     :timer.send_interval(heartbeat_interval, :check_nodes)
@@ -68,16 +69,19 @@ defmodule Handoff.DistributedExecutor do
        monitored: %{},
        # Retry counts for failed functions
        retry_count: %{},
-       max_retries: Keyword.get(opts, :max_retries, 3)
+       max_retries: Keyword.get(opts, :max_retries, 3),
+       resource_tracker: resource_tracker
      }}
   end
 
   @impl true
   def handle_call(:discover_nodes, _from, state) do
     # Get all connected nodes and query their capabilities
+    tracker = state.resource_tracker
+
     discovered =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
-        case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
+        case :rpc.call(node, tracker, :get_capabilities, []) do
           {:badrpc, reason} ->
             Logger.warning(
               "Failed to discover capabilities for node #{inspect(node)}: #{inspect(reason)}"
@@ -91,7 +95,7 @@ defmodule Handoff.DistributedExecutor do
             )
 
             # Register the node with the resource tracker
-            :ok = SimpleResourceTracker.register(node, capabilities)
+            :ok = tracker.register(node, capabilities)
             Map.put(acc, node, capabilities)
         end
       end)
@@ -155,6 +159,11 @@ defmodule Handoff.DistributedExecutor do
       end)
 
     {:noreply, %{state | executing: Map.put(state.executing, task.ref, from)}}
+  end
+
+  @impl true
+  def handle_call(:get_resource_tracker, _from, state) do
+    {:reply, state.resource_tracker, state}
   end
 
   @impl true
@@ -229,14 +238,13 @@ defmodule Handoff.DistributedExecutor do
 
   defp execute_dag(dag, caller, max_retries) do
     # Get node capabilities from the tracker
+    tracker = GenServer.call(__MODULE__, :get_resource_tracker)
+
     node_caps =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
-        case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
-          {:badrpc, _} ->
-            acc
-
-          caps when is_map(caps) ->
-            Map.put(acc, node, caps)
+        case :rpc.call(node, tracker, :get_capabilities, []) do
+          {:badrpc, _} -> acc
+          caps when is_map(caps) -> Map.put(acc, node, caps)
         end
       end)
 
@@ -500,8 +508,10 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp maybe_request_resources(function) do
+    tracker = GenServer.call(__MODULE__, :get_resource_tracker)
+
     if function.cost && function.node do
-      case SimpleResourceTracker.request(function.node, function.cost) do
+      case tracker.request(function.node, function.cost) do
         :ok -> {:ok, true}
         error -> error
       end
@@ -511,8 +521,10 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp maybe_release_resources(function, resources_requested?) do
+    tracker = GenServer.call(__MODULE__, :get_resource_tracker)
+
     if resources_requested? do
-      SimpleResourceTracker.release(function.node, function.cost)
+      tracker.release(function.node, function.cost)
     end
 
     :ok
