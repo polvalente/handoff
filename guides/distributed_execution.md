@@ -6,7 +6,7 @@ This guide explains how to execute Handoff DAGs across multiple Elixir nodes for
 
 - A working Elixir cluster with connected nodes
 - Handoff installed on all nodes
-- Basic understanding of Handoff DAGs (see [Getting Started](getting_started.md))
+- Basic understanding of Handoff DAGs (see [Getting Started](getting_started.livemd))
 
 ## Setting Up Nodes
 
@@ -17,7 +17,7 @@ Before executing a DAG in a distributed environment, you need to set up your nod
 Handoff.start()
 
 # Register the local node with its capabilities
-Handoff.register_local_node(%{
+Handoff.register_node(Node.self(), %{
   cpu: 8,        # 8 CPU cores
   memory: 16000, # 16GB memory
   gpu: 1         # 1 GPU unit

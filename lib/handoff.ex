@@ -21,15 +21,18 @@ defmodule Handoff do
   """
   def start(opts \\ []) do
     resource_tracker = Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
+
     tracker =
       case resource_tracker do
         mod when is_atom(mod) ->
           # Start the tracker if it's a module
           {:ok, pid} = mod.start_link([])
           pid
+
         pid when is_pid(pid) or is_atom(pid) ->
           pid
       end
+
     {:ok, sup_pid} = Handoff.Supervisor.start_link(Keyword.put(opts, :resource_tracker, tracker))
     {:ok, sup_pid, tracker}
   end
@@ -97,6 +100,9 @@ defmodule Handoff do
   @doc """
   Registers a node with its resource capabilities.
 
+  For local nodes, registers directly with the local resource tracker.
+  For remote nodes, makes an RPC call to register on the remote node.
+
   ## Parameters
   - tracker: The resource tracker pid or name
   - node: The node to register
@@ -108,7 +114,20 @@ defmodule Handoff do
   ```
   """
   def register_node(tracker, node, caps) do
-    tracker.register(node, caps)
+    if node == Node.self() do
+      # Local node: register directly with the resource tracker
+      # The DistributedExecutor will discover this node through its discovery process
+      tracker.register(node, caps)
+    else
+      # Remote node: use RPC to register on the remote node
+      case :rpc.call(node, tracker, :register, [node, caps]) do
+        {:badrpc, reason} ->
+          {:error, {:rpc_failed, reason}}
+
+        result ->
+          result
+      end
+    end
   end
 
   @doc """
@@ -122,17 +141,51 @@ defmodule Handoff do
   end
 
   @doc """
-  Registers the local node with its capabilities for distributed execution.
+  Checks if the specified node has the required resources available.
+
+  For local nodes, checks directly with the local resource tracker.
+  For remote nodes, makes an RPC call to check on the remote node directly.
 
   ## Parameters
-  - caps: Map of capabilities provided by this node
+  - tracker: The resource tracker pid or name
+  - node: The node to check
+  - req: Map of resource requirements to check
+
+  ## Returns
+  - true if resources are available
+  - false otherwise
 
   ## Example
   ```
-  Handoff.register_local_node(%{cpu: 8, memory: 16000})
+  Handoff.resources_available?(Handoff.SimpleResourceTracker, Node.self(), %{cpu: 2, memory: 4000})
   ```
   """
+  def resources_available?(tracker, node, req) do
+    if node == Node.self() do
+      # Local node: check directly
+      tracker.available?(node, req)
+    else
+      # Remote node: use RPC to check on the source node
+      case :rpc.call(node, tracker, :available?, [node, req]) do
+        {:badrpc, _reason} ->
+          false
 
+        result ->
+          result
+      end
+    end
+  end
+
+  @doc """
+  Stores a function result locally on the origin node for a specific DAG and registers its location.
+  The result is stored only on the node where it was produced, not broadcast.
+
+  ## Parameters
+  - dag_id: The ID of the DAG
+  - function_id: The ID of the function
+  - result: The result to store
+  - origin_node: The node where the result was produced (defaults to current node)
+  """
   def store_result(dag_id, function_id, result, origin_node \\ Node.self()) do
     Handoff.DistributedResultStore.store_distributed(dag_id, function_id, result, origin_node)
   end
