@@ -17,6 +17,120 @@ defmodule Handoff.ResourceTest do
     {:ok, %{test_nodes: test_nodes}}
   end
 
+  describe "process monitoring and resource cleanup" do
+    test "automatically releases resources when process dies" do
+      node = Node.self()
+      resources = %{cpu: 2, memory: 1000}
+
+      # Register the node with resources
+      SimpleResourceTracker.register(node, resources)
+
+      # Verify initial state - all resources available
+      assert SimpleResourceTracker.available?(node, %{cpu: 2, memory: 1000})
+
+      # Spawn a process that will request resources and then die
+      test_pid = self()
+
+      spawned_pid =
+        spawn(fn ->
+          # Request resources from the spawned process
+          :ok = SimpleResourceTracker.request(node, %{cpu: 1, memory: 500})
+
+          # Notify test process that resources were allocated
+          send(test_pid, :resources_allocated)
+
+          # Wait a bit then exit (simulating process death)
+          :timer.sleep(100)
+        end)
+
+      # Wait for resources to be allocated
+      assert_receive :resources_allocated, 1000
+
+      # Verify resources are now in use
+      refute SimpleResourceTracker.available?(node, %{cpu: 2, memory: 1000})
+      assert SimpleResourceTracker.available?(node, %{cpu: 1, memory: 500})
+
+      # Wait for the process to die
+      ref = Process.monitor(spawned_pid)
+
+      assert_receive {:DOWN, ^ref, :process, ^spawned_pid, _reason}, 1000
+
+      # Give the resource tracker a moment to process the DOWN message
+      :timer.sleep(100)
+
+      # Verify resources are automatically released after process death
+      assert SimpleResourceTracker.available?(node, %{cpu: 2, memory: 1000})
+    end
+
+    test "handles multiple processes allocating resources" do
+      node = Node.self()
+      resources = %{cpu: 4, memory: 2000}
+
+      # Register the node with resources
+      SimpleResourceTracker.register(node, resources)
+
+      test_pid = self()
+
+      # Spawn two processes that allocate resources
+      pid1 =
+        spawn(fn ->
+          :ok = SimpleResourceTracker.request(node, %{cpu: 1, memory: 500})
+          send(test_pid, {:allocated, 1})
+          # Keep process alive until explicitly killed
+          receive do
+            :shutdown -> :ok
+          end
+        end)
+
+      pid2 =
+        spawn(fn ->
+          :ok = SimpleResourceTracker.request(node, %{cpu: 2, memory: 800})
+          send(test_pid, {:allocated, 2})
+          # Die sooner
+          :timer.sleep(100)
+        end)
+
+      # Wait for both allocations
+      receive do
+        {:allocated, 1} -> :ok
+      after
+        1000 -> flunk("Process 1 allocation timeout")
+      end
+
+      receive do
+        {:allocated, 2} -> :ok
+      after
+        1000 -> flunk("Process 2 allocation timeout")
+      end
+
+      # Verify only 1 CPU and 700 memory remain available
+      assert SimpleResourceTracker.available?(node, %{cpu: 1, memory: 700})
+      refute SimpleResourceTracker.available?(node, %{cpu: 2, memory: 800})
+
+      # Wait for process 2 to die
+      ref2 = Process.monitor(pid2)
+
+      receive do
+        {:DOWN, ^ref2, :process, ^pid2, _reason} -> :ok
+      after
+        1000 -> flunk("Process 2 did not die within timeout")
+      end
+
+      # Give resource tracker time to process
+      :timer.sleep(100)
+
+      # Verify process 2's resources are released but process 1's are still held
+      assert SimpleResourceTracker.available?(node, %{cpu: 3, memory: 1500})
+      refute SimpleResourceTracker.available?(node, %{cpu: 4, memory: 2000})
+
+      # Shutdown process 1 and verify all resources are released
+      send(pid1, :shutdown)
+      :timer.sleep(100)
+
+      assert SimpleResourceTracker.available?(node, %{cpu: 4, memory: 2000})
+    end
+  end
+
   describe "resource tracking" do
     test "registers node with capabilities" do
       # Register node with CPU and memory capabilities

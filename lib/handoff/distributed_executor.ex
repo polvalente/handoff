@@ -261,9 +261,6 @@ defmodule Handoff.DistributedExecutor do
         end
       end)
 
-    # Initialize allocations to empty map in case initial allocation fails
-    allocations = %{}
-
     try do
       # Allocate functions to nodes - this may raise AllocationError
       allocations = allocate_functions(dag, node_caps)
@@ -300,9 +297,6 @@ defmodule Handoff.DistributedExecutor do
     catch
       err ->
         GenServer.reply(caller, {:error, err})
-    after
-      # Always clean up all resources for this DAG when execution ends
-      cleanup_dag_resources(dag, allocations)
     end
   end
 
@@ -543,24 +537,6 @@ defmodule Handoff.DistributedExecutor do
     end
 
     :ok
-  end
-
-  defp cleanup_dag_resources(dag, allocations) do
-    # Release resources for all functions in the DAG based on their allocations and costs
-    Enum.each(allocations, fn {function_id, node} ->
-      case Map.get(dag.functions, function_id) do
-        %{cost: cost} when not is_nil(cost) ->
-          Logger.info(
-            "Releasing resources for function #{inspect(function_id)} on node #{inspect(node)}: #{inspect(cost)}"
-          )
-
-          SimpleResourceTracker.release(node, cost)
-
-        _ ->
-          # Function has no cost, nothing to release
-          :ok
-      end
-    end)
   end
 
   defp execute_with_node_type(dag_id, function, args, all_dag_functions) do

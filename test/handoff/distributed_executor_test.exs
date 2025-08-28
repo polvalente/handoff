@@ -9,10 +9,14 @@ defmodule Handoff.DistributedExecutorTest do
   alias Handoff.SimpleResourceTracker
 
   setup do
-    # Register local node with some capabilities
+    # Register local node with some capabilities and reset any used resources
     [node_2 | _] = Application.get_env(:handoff, :test_nodes)
     SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
     :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000}])
+
+    # Also ensure the local tracker knows about the remote node's fresh capabilities
+    SimpleResourceTracker.register(node_2, %{cpu: 4, memory: 2000})
+
     %{node_2: node_2}
   end
 
