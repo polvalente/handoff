@@ -242,25 +242,31 @@ defmodule Handoff.SimpleResourceTracker do
   end
 
   defp track_process_allocation(pid, node, req, process_allocations, monitors) do
-    # Check if we're already monitoring this process
     if Map.has_key?(process_allocations, pid) do
-      # Already monitoring, just add the allocation
-      updated_allocations =
-        Map.update!(process_allocations, pid, fn node_allocations ->
-          Map.update(node_allocations, node, req, fn existing_req ->
-            # Merge the resource requirements
-            Map.merge(existing_req, req, fn _key, v1, v2 -> v1 + v2 end)
-          end)
-        end)
-
-      {updated_allocations, monitors}
+      update_existing_allocation(pid, node, req, process_allocations, monitors)
     else
-      # Start monitoring this process
-      monitor_ref = Process.monitor(pid)
-      new_process_allocations = Map.put(process_allocations, pid, %{node => req})
-      new_monitors = Map.put(monitors, monitor_ref, pid)
-      {new_process_allocations, new_monitors}
+      start_monitoring_process(pid, node, req, process_allocations, monitors)
     end
+  end
+
+  defp update_existing_allocation(pid, node, req, process_allocations, monitors) do
+    updated_allocations =
+      Map.update!(process_allocations, pid, fn node_allocations ->
+        Map.update(node_allocations, node, req, &merge_resource_requirements(&1, req))
+      end)
+
+    {updated_allocations, monitors}
+  end
+
+  defp start_monitoring_process(pid, node, req, process_allocations, monitors) do
+    monitor_ref = Process.monitor(pid)
+    new_process_allocations = Map.put(process_allocations, pid, %{node => req})
+    new_monitors = Map.put(monitors, monitor_ref, pid)
+    {new_process_allocations, new_monitors}
+  end
+
+  defp merge_resource_requirements(existing_req, new_req) do
+    Map.merge(existing_req, new_req, fn _key, v1, v2 -> v1 + v2 end)
   end
 
   defp untrack_process_allocation(pid, node, req, process_allocations, monitors) do

@@ -91,7 +91,7 @@ Once a DAG is constructed and validated, you can execute it. Handoff's `Distribu
 # Ensure Handoff application is started (typically in your application.ex)
 # For scripts or Livebooks, you might need:
 # {:ok, _pid} = Handoff.start_link() # Or Handoff.Application.start(:normal, [])
-# Handoff.DistributedExecutor.register_local_node(%{cpu: 2, memory: 1024}) # Example capabilities
+# Handoff.register_node(Node.self(), %{cpu: 2, memory: 1024}) # Example capabilities
 
 case Handoff.DistributedExecutor.execute(dag) do
   {:ok, results_map} ->
@@ -115,7 +115,7 @@ Handoff is designed to distribute DAG execution across multiple Erlang nodes. To
 
 1. Ensure nodes are connected in an Erlang cluster.
 2. Start the `Handoff` application on each node.
-3. Register each node's capabilities (e.g., CPU, memory) with `Handoff.DistributedExecutor.register_local_node/1`.
+3. Register each node's capabilities (e.g., CPU, memory) with `Handoff.register_node/2`.
 4. Optionally, specify node placement preferences or resource costs for your functions.
 
 Here's a conceptual example. We'll reuse `MyTasks.format_output/1` and imagine a `MyDistributedTasks` module:
@@ -128,7 +128,7 @@ Here's a conceptual example. We'll reuse `MyTasks.format_output/1` and imagine a
 # Register node capabilities (example for one node)
 # This would typically be done on each node with its specific resources.
 node_capabilities = %{cpu: 4, memory: 8192, gpu: 1}
-Handoff.DistributedExecutor.register_local_node(node_capabilities)
+Handoff.register_node(Node.self(), node_capabilities)
 
 # Example Task Module (must be available on all nodes)
 defmodule MyDistributedTasks do

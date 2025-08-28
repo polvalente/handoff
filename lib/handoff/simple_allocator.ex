@@ -209,72 +209,90 @@ defmodule Handoff.SimpleAllocator do
   end
 
   defp merge_collocated_costs(functions, collocated_functions) do
+    g = build_collocation_graph(functions, collocated_functions)
+    collocated_by_target = extract_collocation_components(g)
+
+    updated_functions = merge_costs_into_functions(functions, collocated_by_target)
+    remapped_collocations = build_remapping_table(collocated_by_target)
+
+    {remapped, to_collocate} =
+      partition_collocated_functions(collocated_functions, remapped_collocations)
+
+    {updated_functions, remapped, to_collocate}
+  end
+
+  defp build_collocation_graph(functions, collocated_functions) do
     g = :digraph.new()
 
+    # Add root vertices for all functions
     for %{id: id} <- functions do
       :digraph.add_vertex(g, id, :root)
     end
 
+    # Add collocated functions and their edges
     for %{id: id, node: {:collocated, target_id}, cost: cost} <- collocated_functions do
-      if !:digraph.vertex(g, id) do
-        :digraph.add_vertex(g, id, cost)
-      end
-
-      if !:digraph.vertex(g, target_id) do
-        :digraph.add_vertex(g, target_id, cost)
-      end
-
+      add_vertex_if_missing(g, id, cost)
+      add_vertex_if_missing(g, target_id, cost)
       :digraph.add_edge(g, id, target_id)
     end
 
-    collocated_by_target =
-      for component <- :digraph_utils.components(g), into: %{} do
-        {[{root_id, :root}], collocations} =
-          component
-          |> Enum.map(&:digraph.vertex(g, &1))
-          |> Enum.split_with(fn {_, label} ->
-            label == :root
-          end)
+    g
+  end
 
-        {root_id, collocations}
+  defp add_vertex_if_missing(graph, vertex_id, cost) do
+    unless :digraph.vertex(graph, vertex_id) do
+      :digraph.add_vertex(graph, vertex_id, cost)
+    end
+  end
+
+  defp extract_collocation_components(graph) do
+    for component <- :digraph_utils.components(graph), into: %{} do
+      {[{root_id, :root}], collocations} =
+        component
+        |> Enum.map(&:digraph.vertex(graph, &1))
+        |> Enum.split_with(fn {_, label} -> label == :root end)
+
+      {root_id, collocations}
+    end
+  end
+
+  defp merge_costs_into_functions(functions, collocated_by_target) do
+    Enum.map(functions, fn %{id: id, cost: cost} = function ->
+      case Map.get(collocated_by_target, id) do
+        nil -> function
+        collocations -> %{function | cost: calculate_merged_cost(cost, collocations)}
       end
+    end)
+  end
 
-    functions =
-      Enum.map(functions, fn %{id: id, cost: cost} = function ->
-        if collocations = Map.get(collocated_by_target, id) do
-          cost =
-            Enum.reduce(collocations, cost || %{}, fn {_id, cost}, acc ->
-              if cost do
-                Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
-              else
-                acc
-              end
-            end)
+  defp calculate_merged_cost(base_cost, collocations) do
+    Enum.reduce(collocations, base_cost || %{}, fn {_id, cost}, acc ->
+      merge_cost_if_present(acc, cost)
+    end)
+  end
 
-          %{function | cost: cost}
-        else
-          function
-        end
+  defp merge_cost_if_present(acc, nil), do: acc
+
+  defp merge_cost_if_present(acc, cost) do
+    Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
+  end
+
+  defp build_remapping_table(collocated_by_target) do
+    collocated_by_target
+    |> Enum.flat_map(fn {id, collocations} ->
+      Enum.map(collocations, fn {collocated_id, _cost} ->
+        {collocated_id, id}
       end)
+    end)
+    |> Map.new()
+  end
 
-    remapped_collocations =
-      collocated_by_target
-      |> Enum.flat_map(fn {id, collocations} ->
-        Enum.map(collocations, fn {collocated_id, _cost} ->
-          {collocated_id, id}
-        end)
-      end)
-      |> Map.new()
-
-    {remapped, to_collocate} =
-      Enum.reduce(collocated_functions, {[], []}, fn f, {l, r} ->
-        if target_id = remapped_collocations[f.id] do
-          {[%{f | node: {:collocated, target_id}, cost: nil} | l], r}
-        else
-          {l, [f | r]}
-        end
-      end)
-
-    {functions, remapped, to_collocate}
+  defp partition_collocated_functions(collocated_functions, remapped_collocations) do
+    Enum.reduce(collocated_functions, {[], []}, fn f, {remapped, to_collocate} ->
+      case Map.get(remapped_collocations, f.id) do
+        nil -> {remapped, [f | to_collocate]}
+        target_id -> {[%{f | node: {:collocated, target_id}, cost: nil} | remapped], to_collocate}
+      end
+    end)
   end
 end

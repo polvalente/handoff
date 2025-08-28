@@ -425,7 +425,7 @@ defmodule DistributedImageProcessing do
     # Register the local node with capabilities
     # In a real multi-node setup, each node would do this.
     local_node_caps = %{cpu: 8, memory: 16000, gpu: 1}
-    DistributedExecutor.register_local_node(local_node_caps)
+    Handoff.register_node(Node.self(), local_node_caps)
     Logger.info("Registered local node with capabilities: #{inspect(local_node_caps)}")
 
     # Discover other nodes in the cluster (optional, but good for distributed runs)
@@ -528,9 +528,9 @@ In a full implementation, you might add a visualization of the DAG. Here's a pla
 
 ## Key Concepts Demonstrated
 
-* Distributed execution across nodes
-* Resource-aware function allocation
-* Complex DAG with multiple parallel branches
-* Resource requirements and allocation
-* Load balancing and cost optimization
-* Quality assessment and results aggregation
+- Distributed execution across nodes
+- Resource-aware function allocation
+- Complex DAG with multiple parallel branches
+- Resource requirements and allocation
+- Load balancing and cost optimization
+- Quality assessment and results aggregation

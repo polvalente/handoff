@@ -31,16 +31,6 @@ defmodule Handoff.DistributedExecutor do
   end
 
   @doc """
-  Registers the local node with its capabilities and makes it available for function execution.
-
-  ## Parameters
-  - caps: Map of capabilities provided by this node (e.g., %{cpu: 8, memory: 4000})
-  """
-  def register_local_node(caps) do
-    GenServer.call(__MODULE__, {:register_local_node, caps})
-  end
-
-  @doc """
   Executes the DAG across the distributed nodes.
 
   ## Parameters
@@ -107,17 +97,6 @@ defmodule Handoff.DistributedExecutor do
       end)
 
     {:reply, {:ok, discovered}, %{state | nodes: Map.merge(state.nodes, discovered)}}
-  end
-
-  @impl true
-  def handle_call({:register_local_node, caps}, _from, state) do
-    # Register local node with the resource tracker
-    :ok = SimpleResourceTracker.register(Node.self(), caps)
-
-    # Update state with local node capabilities
-    nodes = Map.put(state.nodes, Node.self(), caps)
-
-    {:reply, :ok, %{state | nodes: nodes}}
   end
 
   @impl true
