@@ -270,7 +270,7 @@ defmodule Handoff.SimpleResourceTracker do
       new_req = Map.merge(existing_req, req, fn _key, v1, v2 -> max(0, v1 - v2) end)
 
       # Remove zero allocations
-      cleaned_req = Enum.reject(new_req, fn {_resource, amount} -> amount == 0 end) |> Map.new()
+      cleaned_req = new_req |> Enum.reject(fn {_resource, amount} -> amount == 0 end) |> Map.new()
 
       if map_size(cleaned_req) == 0 do
         # No more allocations on this node

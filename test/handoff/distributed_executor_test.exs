@@ -430,7 +430,8 @@ defmodule Handoff.DistributedExecutorTest do
       :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 0}])
 
       dag =
-        Enum.reduce(1..4, DAG.new(), fn
+        1..4
+        |> Enum.reduce(DAG.new(), fn
           1, dag ->
             DAG.add_function(
               dag,
