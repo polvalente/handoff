@@ -416,6 +416,78 @@ defmodule Handoff.DistributedExecutorTest do
       assert returned_dag_id == small_dag.id
       assert Map.get(actual_results, :small_resource) == 42
     end
+
+    test "merges collocated costs" do
+      [node_2 | _] = Application.get_env(:handoff, :test_nodes)
+      SimpleResourceTracker.register(Node.self(), %{cpu: 4})
+      :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 0}])
+
+      dag =
+        Enum.reduce(1..4, DAG.new(), fn
+          1, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :f1,
+                code: &Elixir.Function.identity/1,
+                args: [],
+                extra_args: [42],
+                cost: %{cpu: 1},
+                node: Node.self()
+              }
+            )
+
+          i, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :"f#{i}",
+                code: &Elixir.Function.identity/1,
+                args: [:"f#{i - 1}"],
+                extra_args: [],
+                cost: %{cpu: 1},
+                node: {:collocated, :f1}
+              }
+            )
+        end)
+
+      assert {:ok, %{allocations: allocations}} = DistributedExecutor.execute(dag)
+      assert Enum.all?(allocations, fn {_, value} -> value == Node.self() end)
+
+      dag =
+        Enum.reduce(1..4, DAG.new(), fn
+          1, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :f1,
+                code: &Elixir.Function.identity/1,
+                args: [],
+                extra_args: [42],
+                cost: %{cpu: 1},
+                node: node_2
+              }
+            )
+
+          i, dag ->
+            DAG.add_function(
+              dag,
+              %Function{
+                id: :"f#{i}",
+                code: &Elixir.Function.identity/1,
+                args: [:"f#{i - 1}"],
+                extra_args: [],
+                cost: %{cpu: 1},
+                node: {:collocated, :f1}
+              }
+            )
+        end)
+
+      assert {:error,
+              {:allocation_error,
+               "Insufficient resources on node #{inspect(node_2)} for function :f1"}} ==
+               DistributedExecutor.execute(dag)
+    end
   end
 
   describe "execute_function_on_node with synthetic nodes" do

@@ -253,8 +253,11 @@ defmodule Handoff.DistributedExecutor do
     node_caps =
       Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
         case :rpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, []) do
-          {:badrpc, _} -> acc
-          caps when is_map(caps) -> Map.put(acc, node, caps)
+          {:badrpc, _} ->
+            acc
+
+          caps when is_map(caps) ->
+            Map.put(acc, node, caps)
         end
       end)
 

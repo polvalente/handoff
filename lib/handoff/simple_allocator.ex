@@ -57,17 +57,21 @@ defmodule Handoff.SimpleAllocator do
         _ -> false
       end)
 
+    pinned_functions = merge_collocated_costs(pinned_functions, collocated_functions)
+    dynamic_functions = merge_collocated_costs(dynamic_functions, collocated_functions)
+    collocated_functions = put_in(collocated_functions, [Access.all(), Access.key(:cost)], nil)
+
     # Process pinned functions first
-    {pinned_assignments, pinned_resources} =
+    {pinned_assignments, available_resources_after_pinning} =
       perform_pinned_allocation(pinned_functions, %{}, initial_available_resources)
 
     # Process remaining (dynamic) functions
-    {dynamic_assignments_map, dynamic_resources, _dynamic_nodes} =
+    {dynamic_assignments_map, available_resources_after_dynamic_allocation, _dynamic_nodes} =
       Enum.reduce(
         # Use functions not already pinned
         dynamic_functions,
         # Start with results from pinned
-        {pinned_assignments, pinned_resources, nodes},
+        {pinned_assignments, available_resources_after_pinning, nodes},
         fn
           %Function{id: id, cost: cost},
           {current_assignments, available_resources, current_nodes_list} ->
@@ -94,7 +98,10 @@ defmodule Handoff.SimpleAllocator do
         target_node = Map.get(dynamic_assignments_map, target_id)
         %{function | node: target_node}
       end)
-      |> perform_pinned_allocation(dynamic_assignments_map, dynamic_resources)
+      |> perform_pinned_allocation(
+        dynamic_assignments_map,
+        available_resources_after_dynamic_allocation
+      )
 
     final_assignments_map
   end
@@ -186,6 +193,28 @@ defmodule Handoff.SimpleAllocator do
       result = max(0, node_resource - function_cost)
 
       {key, result}
+    end)
+  end
+
+  defp merge_collocated_costs(functions, collocated_functions) do
+    collocated_by_target =
+      Enum.group_by(
+        collocated_functions,
+        fn %{node: {:collocated, target_id}} -> target_id end,
+        fn %{cost: cost} -> cost end
+      )
+
+    Enum.map(functions, fn %{id: id, cost: cost} = function ->
+      if collocations = Map.get(collocated_by_target, id) do
+        cost =
+          Enum.reduce(collocations, cost, fn cost, acc ->
+            Map.merge(acc, cost, fn _key, v1, v2 -> v1 + v2 end)
+          end)
+
+        %{function | cost: cost}
+      else
+        function
+      end
     end)
   end
 end

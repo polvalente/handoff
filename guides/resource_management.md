@@ -195,9 +195,9 @@ You can pin a function to a specific node, or collocate it to another function:
 
 ```elixir
 functions = [
-  %Handoff.Function{id: :f1, cost: %{cpu: 1}, node: :node2@host}, # pinned to node2
-  %Handoff.Function{id: :f2, cost: %{cpu: 1}},                    # dynamic
-  %Handoff.Function{id: :f3, cost: %{cpu: 1}, node: {:collocated, :f2}} # must run on same node as f2
+  %Handoff.Function{id: :f1, code: &Function.identity/1, args: [], extra_args: [42], cost: %{cpu: 1}, node: :node2@host}, # pinned to node2
+  %Handoff.Function{id: :f2, code: &Function.identity/1, args: [:f1], cost: %{cpu: 1}},                    # dynamic
+  %Handoff.Function{id: :f3, code: &Function.identity/1, args: [:f2], cost: %{cpu: 1}, node: {:collocated, :f1}} # must run on same node as f2
 ]
 
 nodes_caps = %{

@@ -528,9 +528,9 @@ In a full implementation, you might add a visualization of the DAG. Here's a pla
 
 ## Key Concepts Demonstrated
 
-- Distributed execution across nodes
-- Resource-aware function allocation
-- Complex DAG with multiple parallel branches
-- Resource requirements and allocation
-- Load balancing and cost optimization
-- Quality assessment and results aggregation
+* Distributed execution across nodes
+* Resource-aware function allocation
+* Complex DAG with multiple parallel branches
+* Resource requirements and allocation
+* Load balancing and cost optimization
+* Quality assessment and results aggregation
