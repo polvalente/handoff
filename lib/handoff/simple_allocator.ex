@@ -240,7 +240,7 @@ defmodule Handoff.SimpleAllocator do
   end
 
   defp add_vertex_if_missing(graph, vertex_id, cost) do
-    unless :digraph.vertex(graph, vertex_id) do
+    if !:digraph.vertex(graph, vertex_id) do
       :digraph.add_vertex(graph, vertex_id, cost)
     end
   end
