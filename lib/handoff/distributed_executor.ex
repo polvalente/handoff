@@ -54,7 +54,7 @@ defmodule Handoff.DistributedExecutor do
   def init(opts) do
     # Get connection settings from options
     heartbeat_interval = Keyword.get(opts, :heartbeat_interval, 5000)
-    resource_tracker = Keyword.get(opts, :resource_tracker, Handoff.SimpleResourceTracker)
+    resource_tracker = Keyword.get(opts, :resource_tracker, SimpleResourceTracker)
 
     # Schedule periodic heartbeat
     :timer.send_interval(heartbeat_interval, :check_nodes)
@@ -162,6 +162,11 @@ defmodule Handoff.DistributedExecutor do
   end
 
   @impl true
+  def handle_call(:get_resource_tracker, _from, state) do
+    {:reply, state.resource_tracker, state}
+  end
+
+  @impl true
   def handle_info({ref, _result}, %{executing: executing} = state)
       when is_map_key(executing, ref) do
     {:noreply, %{state | executing: Map.delete(executing, ref)}}
@@ -227,11 +232,6 @@ defmodule Handoff.DistributedExecutor do
       end)
 
     {:noreply, %{state | nodes: alive_nodes}}
-  end
-
-  @impl true
-  def handle_call(:get_resource_tracker, _from, state) do
-    {:reply, state.resource_tracker, state}
   end
 
   # Private functions
