@@ -261,6 +261,9 @@ defmodule Handoff.DistributedExecutor do
         end
       end)
 
+    # Initialize allocations to empty map in case initial allocation fails
+    allocations = %{}
+
     try do
       # Allocate functions to nodes - this may raise AllocationError
       allocations = allocate_functions(dag, node_caps)
@@ -276,56 +279,30 @@ defmodule Handoff.DistributedExecutor do
       executed = %{}
       pending = MapSet.new()
 
-      try do
-        results =
-          execute_functions_with_deps(
-            dag,
-            to_be_executed,
-            executed,
-            pending,
-            max_retries
-          )
+      results =
+        execute_functions_with_deps(
+          dag,
+          to_be_executed,
+          executed,
+          pending,
+          max_retries
+        )
 
-        # Check if any function failed due to resource constraints
-        resource_errors =
-          Enum.filter(results, fn {_id, result} ->
-            case result do
-              {:error, {:allocation_error, _}} ->
-                true
-
-              _ ->
-                false
-            end
-          end)
-
-        if Enum.empty?(resource_errors) do
-          GenServer.reply(
-            caller,
-            {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
-          )
-        else
-          # If any function failed due to resource constraints, return unified error
-          GenServer.reply(
-            caller,
-            {:error, {:allocation_error, "Resource constraints not satisfied"}}
-          )
-        end
-      catch
-        {:allocation_error, message} ->
-          # Clean up all resources for this DAG and return error
-          cleanup_dag_resources(dag, allocations)
-          GenServer.reply(caller, {:error, {:allocation_error, message}})
-      after
-        # Always clean up all resources for this DAG when execution ends
-        cleanup_dag_resources(dag, allocations)
-      end
+      # All functions executed successfully (AllocationError exceptions would have bubbled up)
+      GenServer.reply(
+        caller,
+        {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
+      )
     rescue
       e in [AllocationError] ->
-        Logger.error("Allocation failed during initial allocation: #{e.message}")
+        Logger.error("Allocation error during DAG execution: #{e.message}")
         GenServer.reply(caller, {:error, {:allocation_error, e.message}})
     catch
       err ->
         GenServer.reply(caller, {:error, err})
+    after
+      # Always clean up all resources for this DAG when execution ends
+      cleanup_dag_resources(dag, allocations)
     end
   end
 
@@ -482,21 +459,7 @@ defmodule Handoff.DistributedExecutor do
 
         {:error, reason} ->
           Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
-          # Convert error to unified format if it's a resource constraint
-          unified_error =
-            case reason do
-              "Failed to execute function " <> _ ->
-                if String.contains?(reason, "Resources unavailable") do
-                  {:allocation_error, reason}
-                else
-                  reason
-                end
-
-              _ ->
-                reason
-            end
-
-          executed_acc = Map.put(executed_acc, function_id, {:error, unified_error})
+          executed_acc = Map.put(executed_acc, function_id, {:error, reason})
           to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
           {pending_acc, to_be_executed_acc, executed_acc}
       end
@@ -517,11 +480,9 @@ defmodule Handoff.DistributedExecutor do
       {:ok, result}
     else
       {:error, :resources_unavailable} ->
-        # Throw allocation error for early termination
-        throw(
-          {:allocation_error,
-           "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"}
-        )
+        # Raise allocation error for early termination
+        raise AllocationError,
+              "Resources unavailable for function #{inspect(function.id)} on node #{function.node}"
 
       {:error, reason} when current_retry < max_retries ->
         Logger.warning(
@@ -542,6 +503,10 @@ defmodule Handoff.DistributedExecutor do
          "Failed to execute function #{inspect(function.id)} after #{max_retries + 1} attempts. Last error: #{inspect(reason)}"}
     end
   rescue
+    e in [AllocationError] ->
+      # Don't retry allocation errors, let them bubble up to terminate DAG execution
+      reraise e, __STACKTRACE__
+
     e ->
       if current_retry < max_retries do
         Logger.warning(

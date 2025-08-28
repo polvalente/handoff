@@ -215,9 +215,6 @@ defmodule Handoff.SimpleAllocator do
       :digraph.add_vertex(g, id, :root)
     end
 
-    dbg(functions)
-    dbg(collocated_functions)
-
     for %{id: id, node: {:collocated, target_id}, cost: cost} <- collocated_functions do
       if !:digraph.vertex(g, id) do
         :digraph.add_vertex(g, id, cost)
