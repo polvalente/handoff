@@ -1,7 +1,7 @@
 # Getting Started with Handoff
 
 ```elixir
-Mix.install [{:handoff, "~> 0.1"}]
+Mix.install [{:handoff, "~> 0.2"}]
 ```
 
 ## Introduction
