@@ -203,9 +203,6 @@ defmodule Handoff.SimpleAllocator do
   end
 
   defp merge_collocated_costs(functions, collocated_functions) do
-    dbg(functions)
-    dbg(collocated_functions)
-
     g = build_collocation_graph(functions, collocated_functions)
     collocated_by_target = extract_collocation_components(g)
 
