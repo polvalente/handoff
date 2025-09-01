@@ -47,23 +47,17 @@ defmodule Handoff.SimpleAllocator do
         Map.put(acc, node, Map.get(caps, node, %{cpu: 0, memory: 0}))
       end)
 
-    # Partition functions: those with a pre-defined node and those for dynamic allocation
-    {pinned_functions, dynamic_functions} =
-      Enum.split_with(functions, fn %Function{node: node} -> not is_nil(node) end)
-
-    {collocated_functions, pinned_functions} =
-      Enum.split_with(pinned_functions, fn
+    {collocated_functions, functions} =
+      Enum.split_with(functions, fn
         %Function{node: {:collocated, _}} -> true
         _ -> false
       end)
 
-    {pinned_functions, remapped_collocations_pinned, to_collocate_functions} =
-      merge_collocated_costs(pinned_functions, collocated_functions)
+    {functions, collocated_functions, []} =
+      merge_collocated_costs(functions, collocated_functions)
 
-    {dynamic_functions, remapped_collocations_dynamic, []} =
-      merge_collocated_costs(dynamic_functions, to_collocate_functions)
-
-    collocated_functions = remapped_collocations_pinned ++ remapped_collocations_dynamic
+    {pinned_functions, dynamic_functions} =
+      Enum.split_with(functions, fn %Function{node: node} -> not is_nil(node) end)
 
     # Process pinned functions first
     {pinned_assignments, available_resources_after_pinning} =
