@@ -272,11 +272,23 @@ defmodule Handoff.DistributedExecutor do
           max_retries
         )
 
-      # All functions executed successfully (AllocationError exceptions would have bubbled up)
-      GenServer.reply(
-        caller,
-        {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
-      )
+      # Check if any results contain allocation errors (from async execution)
+      allocation_error =
+        Enum.find_value(results, fn
+          {_id, {:error, {:allocation_error, message}}} -> message
+          _ -> nil
+        end)
+
+      if allocation_error do
+        Logger.error("Allocation error during DAG execution: #{allocation_error}")
+        GenServer.reply(caller, {:error, {:allocation_error, allocation_error}})
+      else
+        # All functions executed successfully
+        GenServer.reply(
+          caller,
+          {:ok, %{dag_id: dag.id, results: results, allocations: allocations}}
+        )
+      end
     rescue
       e in [AllocationError] ->
         Logger.error("Allocation error during DAG execution: #{e.message}")
@@ -316,8 +328,8 @@ defmodule Handoff.DistributedExecutor do
 
     # Check for completed functions if there are any pending
     if MapSet.size(new_pending) > 0 do
-      # Small delay to avoid tight polling
-      :timer.sleep(100 + :rand.uniform(20))
+      # Small delay to avoid tight polling (10ms base + 5ms jitter)
+      :timer.sleep(10 + :rand.uniform(5))
 
       # Check for completed functions
       {still_pending, newly_executed} =
@@ -414,37 +426,54 @@ defmodule Handoff.DistributedExecutor do
       args_for_execution =
         fetch_arguments(dag.id, function.args, executed_acc, function.node, dag.functions)
 
-      case execute_function_on_node(
-             dag.id,
-             function,
-             args_for_execution,
-             max_retries,
-             dag.functions
-           ) do
-        {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
-          executed_acc = Map.put(executed_acc, function_id, :remote_executed_and_registered)
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
+      # Launch function execution asynchronously for parallel processing
+      {:async, _pid} =
+        launch_function_async(
+          dag.id,
+          function,
+          args_for_execution,
+          max_retries,
+          dag.functions
+        )
 
-        {:ok, result} ->
-          :ok = ResultStore.store(dag.id, function_id, result)
-          DataLocationRegistry.register(dag.id, function_id, function.node)
-          executed_acc = Map.put(executed_acc, function_id, result)
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
-
-        {:async, _pid} ->
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          pending_acc = MapSet.put(pending_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
-
-        {:error, reason} ->
-          Logger.error("Failed to execute function #{inspect(function_id)}: #{inspect(reason)}")
-          executed_acc = Map.put(executed_acc, function_id, {:error, reason})
-          to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
-          {pending_acc, to_be_executed_acc, executed_acc}
-      end
+      to_be_executed_acc = MapSet.delete(to_be_executed_acc, function_id)
+      pending_acc = MapSet.put(pending_acc, function_id)
+      {pending_acc, to_be_executed_acc, executed_acc}
     end
+  end
+
+  # Launches a function asynchronously and returns {:async, pid}
+  # The spawned process will store the result in ResultStore when complete
+  defp launch_function_async(dag_id, function, args, max_retries, all_dag_functions) do
+    pid =
+      spawn(fn ->
+        try do
+          case execute_function_on_node(dag_id, function, args, max_retries, all_dag_functions) do
+            {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
+              # Remote execution already stored the result on remote node and registered in DLR
+              # Store a marker so the polling loop can detect completion
+              :ok = ResultStore.store(dag_id, function.id, :remote_executed_and_registered)
+
+            {:ok, result} ->
+              :ok = ResultStore.store(dag_id, function.id, result)
+              DataLocationRegistry.register(dag_id, function.id, function.node || Node.self())
+
+            {:error, reason} ->
+              # Store error in ResultStore so polling can detect the failure
+              ResultStore.store(dag_id, function.id, {:error, reason})
+          end
+        rescue
+          e in [AllocationError] ->
+            # Store allocation error so it can be detected and propagated
+            ResultStore.store(dag_id, function.id, {:error, {:allocation_error, e.message}})
+
+          e ->
+            # Store other exceptions as errors
+            ResultStore.store(dag_id, function.id, {:error, Exception.message(e)})
+        end
+      end)
+
+    {:async, pid}
   end
 
   defp execute_function_on_node(

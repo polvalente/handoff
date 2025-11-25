@@ -50,4 +50,22 @@ defmodule Handoff.DistributedTestFunctions do
   def elem_with_nodes(tuple, _source_node, _target_node, index) do
     elem(tuple, index)
   end
+
+  @doc """
+  Sleeps for the specified duration and returns the value.
+  Used for testing parallel execution timing for functions with no dependencies.
+  """
+  def sleep_and_return(value, sleep_ms) do
+    Process.sleep(sleep_ms)
+    value
+  end
+
+  @doc """
+  Receives a dependency result, sleeps, and returns the given value.
+  Used for testing parallel execution timing for functions with one dependency.
+  """
+  def sleep_with_dep_and_return(_dep_result, value, sleep_ms) do
+    Process.sleep(sleep_ms)
+    value
+  end
 end
