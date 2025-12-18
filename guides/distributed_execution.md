@@ -121,16 +121,16 @@ source_fn = %Function{
   extra_args: [[10, 20, 30]]
 }
 
-preprocess_a = %Function{
-  id: :pre_a,
-  args: [:left],
+preprocess_left = %Function{
+  id: :pre_left,
+  args: [:input_data],
   code: &Enum.map/2,
   extra_args: [&Transformations.inc/1],
   cost: %{cpu: 2}
 }
 
-preprocess_b = %Function{
-  id: :right,
+preprocess_right = %Function{
+  id: :pre_right,
   args: [:input_data],
   code: &Enum.map/2,
   extra_args: [&Transformations.double/1],
@@ -139,7 +139,7 @@ preprocess_b = %Function{
 
 aggregate = %Function{
   id: :agg,
-  args: [:left, :right],
+  args: [:pre_left, :pre_right],
   code: &Transformations.sum_two_lists/2,
   cost: %{cpu: 1}
 }
@@ -147,8 +147,8 @@ aggregate = %Function{
 dag =
   dag
   |> Handoff.DAG.add_function(source_fn)
-  |> Handoff.DAG.add_function(preprocess_a)
-  |> Handoff.DAG.add_function(preprocess_b)
+  |> Handoff.DAG.add_function(preprocess_left)
+  |> Handoff.DAG.add_function(preprocess_right)
   |> Handoff.DAG.add_function(aggregate)
 
 :ok = Handoff.DAG.validate(dag)
