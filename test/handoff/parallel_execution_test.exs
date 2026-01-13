@@ -357,10 +357,10 @@ defmodule Handoff.ParallelExecutionTest do
                "Expected at least 2x speedup for #{num_dags} parallel DAGs."
 
       # Log the actual speedup for visibility
-      IO.puts(
-        "\n  Parallel execution speedup: #{Float.round(speedup, 2)}x " <>
-          "(Sequential: #{sequential_time}ms, Parallel: #{parallel_time}ms)"
-      )
+      # IO.puts(
+      #   "\n  Parallel execution speedup: #{Float.round(speedup, 2)}x " <>
+      #     "(Sequential: #{sequential_time}ms, Parallel: #{parallel_time}ms)"
+      # )
     end
   end
 
