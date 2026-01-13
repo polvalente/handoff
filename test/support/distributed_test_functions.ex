@@ -68,4 +68,56 @@ defmodule Handoff.DistributedTestFunctions do
     Process.sleep(sleep_ms)
     value
   end
+
+  @doc """
+  Sends a message to the test process when execution starts, waits for acknowledgment,
+  then returns the value. Used for message-passing based parallelism tests.
+
+  The function sends {:started, function_id, self()} so the test can send :continue
+  directly to this process. This allows tests to verify parallel execution.
+  """
+  def notify_and_wait(test_pid, function_id, value) do
+    send(test_pid, {:started, function_id, self()})
+    receive do
+      :continue -> :ok
+    after
+      10_000 -> raise "Timeout waiting for :continue message"
+    end
+    value
+  end
+
+  @doc """
+  Same as notify_and_wait but for functions with a dependency argument.
+  """
+  def notify_and_wait_with_dep(_dep_result, test_pid, function_id, value) do
+    send(test_pid, {:started, function_id, self()})
+    receive do
+      :continue -> :ok
+    after
+      10_000 -> raise "Timeout waiting for :continue message"
+    end
+    value
+  end
+
+  @doc """
+  Sends a message when started, performs work, then sends completion.
+  Used for verifying execution order and parallelism via message inspection.
+  """
+  def notify_start_and_complete(test_pid, function_id, value) do
+    send(test_pid, {:started, function_id})
+    # Small delay to ensure message ordering is detectable
+    Process.sleep(10)
+    send(test_pid, {:completed, function_id})
+    value
+  end
+
+  @doc """
+  Same as notify_start_and_complete but with a dependency argument.
+  """
+  def notify_start_and_complete_with_dep(_dep_result, test_pid, function_id, value) do
+    send(test_pid, {:started, function_id})
+    Process.sleep(10)
+    send(test_pid, {:completed, function_id})
+    value
+  end
 end

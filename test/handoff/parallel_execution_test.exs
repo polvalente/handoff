@@ -375,4 +375,202 @@ defmodule Handoff.ParallelExecutionTest do
       extra_args: [return_value, @sleep_duration_ms]
     })
   end
+
+  describe "Message-passing parallelism verification" do
+    @doc """
+    These tests use message-passing (send/assert_receive) to verify parallel execution
+    without relying on timing measurements, as suggested by @polvalente.
+    """
+
+    test "independent functions start concurrently (message-passing proof)" do
+      dag_id = {self(), make_ref()}
+      test_pid = self()
+
+      # Create a DAG with 3 independent functions that notify when they start
+      # and wait for a :continue message before completing.
+      # If parallel: all 3 will send :started before we send :continue
+      # If sequential: only 1 would send :started at a time
+      dag =
+        dag_id
+        |> DAG.new()
+        |> DAG.add_function(%Function{
+          id: :func_a,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait/3,
+          extra_args: [test_pid, :func_a, :result_a]
+        })
+        |> DAG.add_function(%Function{
+          id: :func_b,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait/3,
+          extra_args: [test_pid, :func_b, :result_b]
+        })
+        |> DAG.add_function(%Function{
+          id: :func_c,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait/3,
+          extra_args: [test_pid, :func_c, :result_c]
+        })
+
+      # Start execution asynchronously
+      execute_task = Task.async(fn -> DistributedExecutor.execute(dag) end)
+
+      # Wait for all 3 functions to report they've started and collect their pids
+      # If they're running in parallel, we should receive all 3 :started messages
+      # before any function completes (since they're waiting for :continue)
+      pids =
+        for func_id <- [:func_a, :func_b, :func_c] do
+          assert_receive {:started, ^func_id, pid}, 1000
+          pid
+        end
+
+      # All functions have started - this proves parallel execution!
+      # Now send :continue to all waiting functions using their pids
+      Enum.each(pids, fn pid -> send(pid, :continue) end)
+
+      # Wait for execution to complete
+      {:ok, result} = Task.await(execute_task, 5000)
+
+      # Verify results
+      assert result.results[:func_a] == :result_a
+      assert result.results[:func_b] == :result_b
+      assert result.results[:func_c] == :result_c
+    end
+
+    test "dependent functions start in order (message-passing proof)" do
+      dag_id = {self(), make_ref()}
+      test_pid = self()
+
+      # Create a chain A -> B -> C where each depends on the previous
+      # We should see :started messages in order: A, then B, then C
+      dag =
+        dag_id
+        |> DAG.new()
+        |> DAG.add_function(%Function{
+          id: :step_a,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.notify_start_and_complete/3,
+          extra_args: [test_pid, :step_a, :done_a]
+        })
+        |> DAG.add_function(%Function{
+          id: :step_b,
+          args: [:step_a],
+          code: &Handoff.DistributedTestFunctions.notify_start_and_complete_with_dep/4,
+          extra_args: [test_pid, :step_b, :done_b]
+        })
+        |> DAG.add_function(%Function{
+          id: :step_c,
+          args: [:step_b],
+          code: &Handoff.DistributedTestFunctions.notify_start_and_complete_with_dep/4,
+          extra_args: [test_pid, :step_c, :done_c]
+        })
+
+      # Execute and collect messages
+      {:ok, result} = DistributedExecutor.execute(dag)
+
+      # Collect all messages in order received
+      messages = collect_all_messages()
+
+      # Verify A started before B, and B started before C
+      a_start_idx = Enum.find_index(messages, &(&1 == {:started, :step_a}))
+      b_start_idx = Enum.find_index(messages, &(&1 == {:started, :step_b}))
+      c_start_idx = Enum.find_index(messages, &(&1 == {:started, :step_c}))
+
+      assert a_start_idx < b_start_idx,
+             "Expected step_a to start before step_b. Messages: #{inspect(messages)}"
+
+      assert b_start_idx < c_start_idx,
+             "Expected step_b to start before step_c. Messages: #{inspect(messages)}"
+
+      # Also verify A completed before B started
+      a_complete_idx = Enum.find_index(messages, &(&1 == {:completed, :step_a}))
+      assert a_complete_idx < b_start_idx,
+             "Expected step_a to complete before step_b starts. Messages: #{inspect(messages)}"
+
+      # Verify results
+      assert result.results[:step_a] == :done_a
+      assert result.results[:step_b] == :done_b
+      assert result.results[:step_c] == :done_c
+    end
+
+    test "diamond DAG middle layer starts concurrently (message-passing proof)" do
+      dag_id = {self(), make_ref()}
+      test_pid = self()
+
+      # Diamond: source -> (left, middle, right parallel) -> sink
+      # Middle layer functions have a dependency on source, so use notify_and_wait_with_dep
+      dag =
+        dag_id
+        |> DAG.new()
+        |> DAG.add_function(%Function{
+          id: :source,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.notify_start_and_complete/3,
+          extra_args: [test_pid, :source, :from_source]
+        })
+        |> DAG.add_function(%Function{
+          id: :left,
+          args: [:source],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait_with_dep/4,
+          extra_args: [test_pid, :left, :from_left]
+        })
+        |> DAG.add_function(%Function{
+          id: :middle,
+          args: [:source],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait_with_dep/4,
+          extra_args: [test_pid, :middle, :from_middle]
+        })
+        |> DAG.add_function(%Function{
+          id: :right,
+          args: [:source],
+          code: &Handoff.DistributedTestFunctions.notify_and_wait_with_dep/4,
+          extra_args: [test_pid, :right, :from_right]
+        })
+        |> DAG.add_function(%Function{
+          id: :sink,
+          args: [:left, :middle, :right],
+          code: &Handoff.DistributedTestFunctions.h/3,
+          extra_args: []
+        })
+
+      # Start execution asynchronously
+      execute_task = Task.async(fn -> DistributedExecutor.execute(dag) end)
+
+      # Wait for source to complete
+      assert_receive {:started, :source}, 1000
+      assert_receive {:completed, :source}, 1000
+
+      # Now all three middle layer functions should start in parallel
+      # They're all waiting for :continue, so if parallel, all 3 start messages arrive
+      # Collect their pids so we can send :continue directly
+      pids =
+        for func_id <- [:left, :middle, :right] do
+          assert_receive {:started, ^func_id, pid}, 1000
+          pid
+        end
+
+      # All middle layer functions started - proves parallel execution!
+      # Send :continue to let them complete using their pids
+      Enum.each(pids, fn pid -> send(pid, :continue) end)
+
+      # Wait for execution to complete
+      {:ok, result} = Task.await(execute_task, 5000)
+
+      # Verify results
+      assert result.results[:source] == :from_source
+      assert result.results[:left] == :from_left
+      assert result.results[:middle] == :from_middle
+      assert result.results[:right] == :from_right
+      assert result.results[:sink] == [:from_left, :from_middle, :from_right]
+    end
+  end
+
+  # Helper to collect all messages from mailbox
+  defp collect_all_messages(acc \\ []) do
+    receive do
+      msg -> collect_all_messages([msg | acc])
+    after
+      100 -> Enum.reverse(acc)
+    end
+  end
 end

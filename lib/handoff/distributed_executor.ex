@@ -443,10 +443,11 @@ defmodule Handoff.DistributedExecutor do
   end
 
   # Launches a function asynchronously and returns {:async, pid}
-  # The spawned process will store the result in ResultStore when complete
+  # The task will store the result in ResultStore when complete
+  # Uses Task.start_link for proper process management and crash handling
   defp launch_function_async(dag_id, function, args, max_retries, all_dag_functions) do
-    pid =
-      spawn(fn ->
+    {:ok, pid} =
+      Task.start_link(fn ->
         try do
           case execute_function_on_node(dag_id, function, args, max_retries, all_dag_functions) do
             {:ok, {:remote_store_and_registry_ok, _fun_id, _node_where_stored}} ->
