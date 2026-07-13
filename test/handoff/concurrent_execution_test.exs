@@ -175,4 +175,71 @@ defmodule Handoff.ConcurrentExecutionTest do
       assert {:ok, "some_value"} = Handoff.get_result(dag_id_exists, item_id_exists_for_dag, 50)
     end
   end
+
+  describe "concurrent resource claims" do
+    test "allocate_and_claim spills to the next node when the first is full" do
+      alias Handoff.SimpleResourceTracker
+
+      # Simulate two workers registered on the local tracker (orchestrator view)
+      worker1 = :worker1_test@localhost
+      worker2 = :worker2_test@localhost
+
+      :ok = SimpleResourceTracker.register(Node.self(), %{cpu: 1, memory: 100, compute: 0})
+      :ok = SimpleResourceTracker.register(worker1, %{cpu: 1, memory: 100, compute: 2})
+      :ok = SimpleResourceTracker.register(worker2, %{cpu: 1, memory: 100, compute: 2})
+
+      nodes = [Node.self(), worker1, worker2]
+      parent = self()
+
+      tasks =
+        for i <- 1..4 do
+          Task.async(fn ->
+            fun = %Function{
+              id: :"f#{i}",
+              args: [],
+              code: &Elixir.Function.identity/1,
+              extra_args: [i],
+              cost: %{compute: 1}
+            }
+
+            result = SimpleResourceTracker.allocate_and_claim([fun], nodes, self())
+            send(parent, {:claimed, i, result})
+
+            receive do
+              :release ->
+                case result do
+                  {:ok, alloc} ->
+                    [node] = Map.values(alloc)
+                    SimpleResourceTracker.release(node, %{compute: 1})
+
+                  _ ->
+                    :ok
+                end
+            end
+
+            result
+          end)
+        end
+
+      claims =
+        for _ <- 1..4 do
+          receive do
+            {:claimed, i, {:ok, alloc}} -> {i, alloc}
+          after
+            5_000 -> flunk("timed out waiting for claim")
+          end
+        end
+
+      nodes_used =
+        claims
+        |> Enum.map(fn {_i, alloc} -> alloc |> Map.values() |> hd() end)
+        |> Enum.frequencies()
+
+      assert nodes_used[worker1] == 2
+      assert nodes_used[worker2] == 2
+
+      for task <- tasks, do: send(task.pid, :release)
+      Enum.each(tasks, &Task.await(&1, 5_000))
+    end
+  end
 end

@@ -50,6 +50,20 @@ defmodule Handoff.SimpleResourceTracker do
     GenServer.call(__MODULE__, :get_capabilities)
   end
 
+  @doc """
+  Atomically allocate functions onto nodes using *remaining* capacity (`full - used`)
+  and claim those resources for `claimant_pid` (typically the execute Task).
+
+  Concurrent callers serialize on this GenServer, so overflow spills to the next
+  node instead of over-committing the first one from stale full-capacity snapshots.
+  """
+  @spec allocate_and_claim([Handoff.Function.t()], [node()], pid()) ::
+          {:ok, %{term() => node()}} | {:error, :resources_unavailable | term()}
+  def allocate_and_claim(functions, nodes, claimant_pid \\ self())
+      when is_list(functions) and is_list(nodes) and is_pid(claimant_pid) do
+    GenServer.call(__MODULE__, {:allocate_and_claim, functions, nodes, claimant_pid})
+  end
+
   # Server callbacks
 
   @impl GenServer
@@ -193,6 +207,39 @@ defmodule Handoff.SimpleResourceTracker do
   end
 
   @impl GenServer
+  def handle_call({:allocate_and_claim, functions, nodes, claimant_pid}, _from, state) do
+    # Refresh full caps from each node (remote get_capabilities) while preserving
+    # locally tracked `used` so concurrent claims serialize correctly.
+    state = sync_full_capabilities(state, nodes)
+
+    available_caps =
+      Map.new(nodes, fn node ->
+        case Map.get(state.nodes, node) do
+          %{full: full, used: used} ->
+            {node, remaining_caps(full, used)}
+
+          _ ->
+            {node, %{}}
+        end
+      end)
+
+    try do
+      assignments = Handoff.SimpleAllocator.allocate(functions, available_caps)
+
+      case claim_assignments(functions, assignments, claimant_pid, state) do
+        {:ok, new_state} ->
+          {:reply, {:ok, assignments}, new_state}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
+    rescue
+      e in [Handoff.Allocator.AllocationError] ->
+        {:reply, {:error, {:allocation_error, e.message}}, state}
+    end
+  end
+
+  @impl GenServer
   def handle_info({:DOWN, monitor_ref, :process, pid, reason}, state) do
     Logger.info(
       "Process #{inspect(pid)} died (#{inspect(reason)}), cleaning up its resource allocations"
@@ -218,6 +265,129 @@ defmodule Handoff.SimpleResourceTracker do
   end
 
   # Helper functions
+
+  defp sync_full_capabilities(state, nodes) do
+    nodes =
+      Enum.reduce(nodes, state.nodes, fn node, acc ->
+        full = fetch_full_capabilities(node, acc)
+        used = get_in(acc, [node, Access.key(:used)]) || %{}
+        Map.put(acc, node, %{full: full, used: used})
+      end)
+
+    %{state | nodes: nodes}
+  end
+
+  defp fetch_full_capabilities(node, local_nodes) when node == node() do
+    case Map.get(local_nodes, node) do
+      %{full: full} -> full
+      _ -> %{}
+    end
+  end
+
+  defp fetch_full_capabilities(node, local_nodes) do
+    case :rpc.call(node, __MODULE__, :get_capabilities, []) do
+      caps when is_map(caps) and map_size(caps) > 0 ->
+        caps
+
+      _ ->
+        case Map.get(local_nodes, node) do
+          %{full: full} -> full
+          _ -> %{}
+        end
+    end
+  end
+
+  defp remaining_caps(full, used) do
+    full
+    |> Map.keys()
+    |> Enum.concat(Map.keys(used))
+    |> Enum.uniq()
+    |> Map.new(fn key ->
+      {key, Map.get(full, key, 0) - Map.get(used, key, 0)}
+    end)
+  end
+
+  defp claim_assignments(functions, assignments, claimant_pid, state) do
+    functions_by_id = Map.new(functions, &{&1.id, &1})
+
+    # Validate all claims up-front so we don't create monitors / mutate state and then discard it.
+    can_claim? =
+      Enum.all?(assignments, fn {function_id, node} ->
+        function = Map.fetch!(functions_by_id, function_id)
+        cost = function.cost || %{}
+
+        if cost == %{} do
+          true
+        else
+          case Map.get(state.nodes, node) do
+            %{full: full, used: used} -> check_resource_availability(full, used, cost)
+            _ -> false
+          end
+        end
+      end)
+
+    if can_claim? do
+      do_claim(assignments, state, functions_by_id, claimant_pid)
+    else
+      {:error, :resources_unavailable}
+    end
+  end
+
+  defp do_claim(assignments, state, functions_by_id, claimant_pid) do
+    Enum.reduce_while(assignments, {:ok, state}, fn {function_id, node}, {:ok, acc_state} ->
+      function = Map.fetch!(functions_by_id, function_id)
+      cost = function.cost || %{}
+
+      if cost == %{} do
+        {:cont, {:ok, acc_state}}
+      else
+        case claim_on_state(acc_state, node, cost, claimant_pid) do
+          {:ok, new_state} -> {:cont, {:ok, new_state}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end
+    end)
+  end
+
+  defp claim_on_state(state, node, req, claimant_pid) do
+    case Map.get(state.nodes, node) do
+      nil ->
+        {:error, :resources_unavailable}
+
+      %{full: full_caps, used: used} ->
+        if check_resource_availability(full_caps, used, req) do
+          new_used = update_used_resources(used, req, :add)
+
+          nodes =
+            Map.update!(state.nodes, node, fn node_info ->
+              %{node_info | used: new_used}
+            end)
+
+          {new_process_allocations, new_monitors} =
+            track_process_allocation(
+              claimant_pid,
+              node,
+              req,
+              state.process_allocations,
+              state.monitors
+            )
+
+          Logger.debug(
+            "Claimed resources on node #{inspect(node)} for #{inspect(claimant_pid)}: #{inspect(req)}"
+          )
+
+          {:ok,
+           %{
+             state
+             | nodes: nodes,
+               process_allocations: new_process_allocations,
+               monitors: new_monitors
+           }}
+        else
+          {:error, :resources_unavailable}
+        end
+    end
+  end
 
   defp check_resource_availability(full_caps, used, req) do
     Enum.all?(req, fn {resource, amount} ->

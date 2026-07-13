@@ -13,6 +13,11 @@ This directory contains interactive Livebook examples for the Handoff library. T
     * **Dependencies**: Requires `{:image, "~> 0.14"}` (included in its `Mix.install`).
     * **Setup Notes**: This Livebook creates a `temp_images/` directory for placeholder input files. For image saving operations to succeed, you may need to manually create an `output/` directory in the root of the Handoff project workspace before running these parts of the Livebook. Instructions for setting up a multi-node environment for true distributed execution are included within the Livebook.
 
+3. **Parallel Nx.Serving Classification** (`parallel_serving_classification.livemd`)
+    * **Focus**: Spawns two peer nodes from Livebook, pins I/O steps locally, allocates `classify_data` via a custom `compute` resource, and shows concurrent DAG runs batching through a local `Nx.Serving`.
+    * **Dependencies**: Requires `{:nx, "~> 0.9"}` (included in its `Mix.install`). Uses the local Handoff path from the repo.
+    * **Setup Notes**: Starts `worker1` / `worker2` with `:peer`, registers `compute: 5` on peers and `compute: 0` on the Livebook node, then runs 10 parallel pipeline instances. Pipeline code lives in `classifier_pipeline.ex` beside the Livebook so peers can compile the same source.
+
 *(Note: `nx_pipeline.livemd` is currently under development and will be added here once ready.)*
 
 ## Running the Examples

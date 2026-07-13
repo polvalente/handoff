@@ -99,7 +99,7 @@ defmodule Handoff do
   - Same as `Handoff.execute/2`.
   """
   def execute_local(dag, opts \\ []) do
-    # TODO: use simpler topo-sort + reduce strategy for executing the graph locally.
+    # Prefer a simpler topo-sort + reduce strategy for purely local execution.
     dag =
       update_in(dag, [Access.key(:functions), Access.all()], fn {id, func} ->
         modified_func = %{func | node: Node.self(), cost: nil}
