@@ -327,22 +327,26 @@ defmodule Handoff.SimpleResourceTracker do
       end)
 
     if can_claim? do
-      Enum.reduce_while(assignments, {:ok, state}, fn {function_id, node}, {:ok, acc_state} ->
-        function = Map.fetch!(functions_by_id, function_id)
-        cost = function.cost || %{}
-
-        if cost == %{} do
-          {:cont, {:ok, acc_state}}
-        else
-          case claim_on_state(acc_state, node, cost, claimant_pid) do
-            {:ok, new_state} -> {:cont, {:ok, new_state}}
-            {:error, _} = error -> {:halt, error}
-          end
-        end
-      end)
+      do_claim(assignments, state, functions_by_id, claimant_pid)
     else
       {:error, :resources_unavailable}
     end
+  end
+
+  defp do_claim(assignments, state, functions_by_id, claimant_pid) do
+    Enum.reduce_while(assignments, {:ok, state}, fn {function_id, node}, {:ok, acc_state} ->
+      function = Map.fetch!(functions_by_id, function_id)
+      cost = function.cost || %{}
+
+      if cost == %{} do
+        {:cont, {:ok, acc_state}}
+      else
+        case claim_on_state(acc_state, node, cost, claimant_pid) do
+          {:ok, new_state} -> {:cont, {:ok, new_state}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end
+    end)
   end
 
   defp claim_on_state(state, node, req, claimant_pid) do
