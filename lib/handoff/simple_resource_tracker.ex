@@ -344,21 +344,6 @@ defmodule Handoff.SimpleResourceTracker do
       {:error, :resources_unavailable}
     end
   end
-      cost = function.cost || %{}
-
-      if cost == %{} do
-        {:cont, {:ok, acc_state}}
-      else
-        case claim_on_state(acc_state, node, cost, claimant_pid) do
-          {:ok, new_state} ->
-            {:cont, {:ok, new_state}}
-
-          {:error, _} = error ->
-            {:halt, error}
-        end
-      end
-    end)
-  end
 
   defp claim_on_state(state, node, req, claimant_pid) do
     case Map.get(state.nodes, node) do
