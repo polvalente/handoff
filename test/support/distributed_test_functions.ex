@@ -50,4 +50,12 @@ defmodule Handoff.DistributedTestFunctions do
   def elem_with_nodes(tuple, _source_node, _target_node, index) do
     elem(tuple, index)
   end
+
+  @doc """
+  Identity that sleeps so concurrent DAG resource claims overlap.
+  """
+  def slow_identity(value, sleep_ms \\ 150) do
+    Process.sleep(sleep_ms)
+    value
+  end
 end

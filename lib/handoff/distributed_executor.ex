@@ -80,7 +80,7 @@ defmodule Handoff.DistributedExecutor do
     tracker = state.resource_tracker
 
     discovered =
-      Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
+      Enum.reduce(cluster_nodes(), %{}, fn node, acc ->
         case :rpc.call(node, tracker, :get_capabilities, []) do
           {:badrpc, reason} ->
             Logger.warning(
@@ -237,22 +237,11 @@ defmodule Handoff.DistributedExecutor do
   # Private functions
 
   defp execute_dag(dag, caller, max_retries) do
-    # Get node capabilities from the tracker
     tracker = GenServer.call(__MODULE__, :get_resource_tracker)
-
-    node_caps =
-      Enum.reduce([Node.self() | Node.list()], %{}, fn node, acc ->
-        case :rpc.call(node, tracker, :get_capabilities, []) do
-          {:badrpc, _} -> acc
-          caps when is_map(caps) -> Map.put(acc, node, caps)
-        end
-      end)
+    nodes = cluster_nodes()
 
     try do
-      # Allocate functions to nodes - this may raise AllocationError
-      allocations = allocate_functions(dag, node_caps)
-
-      # Update dag functions with node assignments
+      allocations = allocate_and_claim_functions(dag, tracker, nodes)
       dag = assign_nodes_to_functions(dag, allocations)
 
       # Execute functions in topological order
@@ -508,13 +497,10 @@ defmodule Handoff.DistributedExecutor do
   end
 
   defp maybe_request_resources(function) do
-    tracker = GenServer.call(__MODULE__, :get_resource_tracker)
-
+    # Costly functions are claimed in allocate_and_claim_functions/3 before execution.
+    # Per-function release still runs via maybe_release_resources/2.
     if function.cost && function.node do
-      case tracker.request(function.node, function.cost) do
-        :ok -> {:ok, true}
-        error -> error
-      end
+      {:ok, true}
     else
       {:ok, false}
     end
@@ -630,6 +616,49 @@ defmodule Handoff.DistributedExecutor do
 
     # Use SimpleAllocator to get node assignments for regular functions
     Handoff.SimpleAllocator.allocate(regular_functions, node_caps)
+  end
+
+  defp allocate_and_claim_functions(dag, tracker, nodes) do
+    regular_functions =
+      dag.functions
+      |> Map.values()
+      |> Enum.filter(fn func -> func.type == :regular end)
+      |> Enum.sort_by(fn func -> func.id end)
+
+    cond do
+      function_exported?(tracker, :allocate_and_claim, 3) ->
+        case tracker.allocate_and_claim(regular_functions, nodes, self()) do
+          {:ok, allocations} ->
+            allocations
+
+          {:error, :resources_unavailable} ->
+            raise AllocationError,
+                  "Resources unavailable while allocating functions across #{inspect(nodes)}"
+
+          {:error, {:allocation_error, message}} ->
+            raise AllocationError, message
+
+          {:error, reason} ->
+            raise AllocationError, "Allocation failed: #{inspect(reason)}"
+        end
+
+      true ->
+        node_caps =
+          Enum.reduce(nodes, %{}, fn node, acc ->
+            case :rpc.call(node, tracker, :get_capabilities, []) do
+              {:badrpc, _} -> acc
+              caps when is_map(caps) -> Map.put(acc, node, caps)
+            end
+          end)
+
+        allocate_functions(dag, node_caps)
+    end
+  end
+
+  # Include hidden connections (e.g. peers attached to a Livebook `-hidden` runtime).
+  defp cluster_nodes do
+    [Node.self() | Node.list(:connected)]
+    |> Enum.uniq()
   end
 
   # Assign nodes to functions based on allocation result

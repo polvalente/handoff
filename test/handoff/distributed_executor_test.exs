@@ -503,6 +503,42 @@ defmodule Handoff.DistributedExecutorTest do
                "Insufficient resources on node #{inspect(node_2)} for function :f1"}} ==
                DistributedExecutor.execute(dag)
     end
+
+    test "concurrent executes spill compute work across nodes", %{node_2: node_2} do
+      # Prefer self first (compute: 2); overflow should land on node_2 (also compute: 2).
+      :ok = SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000, compute: 2})
+      :ok = :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000, compute: 2}])
+      :ok = SimpleResourceTracker.register(node_2, %{cpu: 4, memory: 2000, compute: 2})
+
+      build_dag = fn i ->
+        {self(), {:spill, i}}
+        |> DAG.new()
+        |> DAG.add_function(%Function{
+          id: :work,
+          args: [],
+          code: &Handoff.DistributedTestFunctions.slow_identity/2,
+          extra_args: [i, 200],
+          cost: %{compute: 1}
+        })
+      end
+
+      tasks =
+        for i <- 1..4 do
+          Task.async(fn -> DistributedExecutor.execute(build_dag.(i)) end)
+        end
+
+      results = Task.await_many(tasks, 30_000)
+
+      assert Enum.all?(results, &match?({:ok, _}, &1))
+
+      nodes_used =
+        results
+        |> Enum.map(fn {:ok, %{allocations: alloc}} -> alloc[:work] end)
+        |> Enum.frequencies()
+
+      assert nodes_used[Node.self()] == 2
+      assert nodes_used[node_2] == 2
+    end
   end
 
   describe "execute_function_on_node with synthetic nodes" do

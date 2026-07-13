@@ -143,7 +143,7 @@ defmodule Handoff.DistributedResultStore do
   @impl true
   def handle_call({:broadcast_clear, dag_id}, _from, state) do
     # Send clear command to all other nodes for the specific DAG (synchronously)
-    Enum.each(Node.list(), fn node ->
+    Enum.each(Node.list(:connected), fn node ->
       :rpc.call(node, ResultStore, :clear, [dag_id])
     end)
 
