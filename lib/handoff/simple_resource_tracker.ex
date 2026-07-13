@@ -310,8 +310,40 @@ defmodule Handoff.SimpleResourceTracker do
   defp claim_assignments(functions, assignments, claimant_pid, state) do
     functions_by_id = Map.new(functions, &{&1.id, &1})
 
-    Enum.reduce_while(assignments, {:ok, state}, fn {function_id, node}, {:ok, acc_state} ->
-      function = Map.fetch!(functions_by_id, function_id)
+    # Validate all claims up-front so we don't create monitors / mutate state and then discard it.
+    can_claim? =
+      Enum.all?(assignments, fn {function_id, node} ->
+        function = Map.fetch!(functions_by_id, function_id)
+        cost = function.cost || %{}
+
+        if cost == %{} do
+          true
+        else
+          case Map.get(state.nodes, node) do
+            %{full: full, used: used} -> check_resource_availability(full, used, cost)
+            _ -> false
+          end
+        end
+      end)
+
+    if can_claim? do
+      Enum.reduce_while(assignments, {:ok, state}, fn {function_id, node}, {:ok, acc_state} ->
+        function = Map.fetch!(functions_by_id, function_id)
+        cost = function.cost || %{}
+
+        if cost == %{} do
+          {:cont, {:ok, acc_state}}
+        else
+          case claim_on_state(acc_state, node, cost, claimant_pid) do
+            {:ok, new_state} -> {:cont, {:ok, new_state}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end
+      end)
+    else
+      {:error, :resources_unavailable}
+    end
+  end
       cost = function.cost || %{}
 
       if cost == %{} do
