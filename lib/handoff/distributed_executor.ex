@@ -625,40 +625,37 @@ defmodule Handoff.DistributedExecutor do
       |> Enum.filter(fn func -> func.type == :regular end)
       |> Enum.sort_by(fn func -> func.id end)
 
-    cond do
-      function_exported?(tracker, :allocate_and_claim, 3) ->
-        case tracker.allocate_and_claim(regular_functions, nodes, self()) do
-          {:ok, allocations} ->
-            allocations
+    if function_exported?(tracker, :allocate_and_claim, 3) do
+      case tracker.allocate_and_claim(regular_functions, nodes, self()) do
+        {:ok, allocations} ->
+          allocations
 
-          {:error, :resources_unavailable} ->
-            raise AllocationError,
-                  "Resources unavailable while allocating functions across #{inspect(nodes)}"
+        {:error, :resources_unavailable} ->
+          raise AllocationError,
+                "Resources unavailable while allocating functions across #{inspect(nodes)}"
 
-          {:error, {:allocation_error, message}} ->
-            raise AllocationError, message
+        {:error, {:allocation_error, message}} ->
+          raise AllocationError, message
 
-          {:error, reason} ->
-            raise AllocationError, "Allocation failed: #{inspect(reason)}"
-        end
+        {:error, reason} ->
+          raise AllocationError, "Allocation failed: #{inspect(reason)}"
+      end
+    else
+      node_caps =
+        Enum.reduce(nodes, %{}, fn node, acc ->
+          case :rpc.call(node, tracker, :get_capabilities, []) do
+            {:badrpc, _} -> acc
+            caps when is_map(caps) -> Map.put(acc, node, caps)
+          end
+        end)
 
-      true ->
-        node_caps =
-          Enum.reduce(nodes, %{}, fn node, acc ->
-            case :rpc.call(node, tracker, :get_capabilities, []) do
-              {:badrpc, _} -> acc
-              caps when is_map(caps) -> Map.put(acc, node, caps)
-            end
-          end)
-
-        allocate_functions(dag, node_caps)
+      allocate_functions(dag, node_caps)
     end
   end
 
   # Include hidden connections (e.g. peers attached to a Livebook `-hidden` runtime).
   defp cluster_nodes do
-    [Node.self() | Node.list(:connected)]
-    |> Enum.uniq()
+    Enum.uniq([Node.self() | Node.list(:connected)])
   end
 
   # Assign nodes to functions based on allocation result

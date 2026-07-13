@@ -15,8 +15,16 @@ jobs:
 
     strategy:
       matrix:
-        elixir: ["1.18.0"]
-        otp: ["25.3", "26.0"]
+        include:
+          - elixir: "1.18.0"
+            otp: "25.3"
+            lint: false
+          - elixir: "1.18.0"
+            otp: "26.0"
+            lint: false
+          - elixir: "1.20.1"
+            otp: "28.0"
+            lint: true
 
     steps:
       - name: Checkout code
@@ -34,20 +42,23 @@ jobs:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
             ${{ runner.os }}-mix-
 
       - name: Get dependencies
         run: mix deps.get
 
       - name: Check formatting
+        if: matrix.lint
         run: mix format --check-formatted
 
       - name: Compile (warnings as errors)
         run: mix compile --warnings-as-errors
 
       - name: Run Credo
+        if: matrix.lint
         run: mix credo --strict
 
       - name: Start epmd

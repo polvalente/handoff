@@ -507,7 +507,13 @@ defmodule Handoff.DistributedExecutorTest do
     test "concurrent executes spill compute work across nodes", %{node_2: node_2} do
       # Prefer self first (compute: 2); overflow should land on node_2 (also compute: 2).
       :ok = SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000, compute: 2})
-      :ok = :rpc.call(node_2, SimpleResourceTracker, :register, [node_2, %{cpu: 4, memory: 2000, compute: 2}])
+
+      :ok =
+        :rpc.call(node_2, SimpleResourceTracker, :register, [
+          node_2,
+          %{cpu: 4, memory: 2000, compute: 2}
+        ])
+
       :ok = SimpleResourceTracker.register(node_2, %{cpu: 4, memory: 2000, compute: 2})
 
       build_dag = fn i ->
