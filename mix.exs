@@ -16,12 +16,12 @@ defmodule Handoff.MixProject do
       aliases: aliases(),
       elixirc_paths: elixirc_paths(Mix.env()),
       package: package(),
-      docs: docs(),
-      preferred_cli_env: [
-        docs: :docs,
-        "hex.publish": :docs
-      ]
+      docs: docs()
     ]
+  end
+
+  def cli do
+    [preferred_envs: [docs: :docs], "hex.publish": :docs]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

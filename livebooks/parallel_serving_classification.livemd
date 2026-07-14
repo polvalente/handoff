@@ -1,0 +1,301 @@
+# Parallel Nx.Serving Batching
+
+## Section
+
+This Livebook shows Handoff distributing a small classification pipeline across peer nodes while
+`Nx.Serving` batches concurrent inference calls.
+
+The graph is:
+
+`collect_input -> classify_data -> show_output`
+
+* `collect_input` and `show_output` are pinned to the Livebook node
+* `classify_data` requires `compute: 1` and runs on peers that advertise `compute: 5`
+* Ten parallel DAG runs feed a local `Nx.Serving` on the workers so requests coalesce into batches
+
+> **Note:** In a future release, node capacity will support `compute: :infinity`, meaning the node
+> accepts any finite `compute` requirement. This example uses numeric `compute: 5` instead.
+
+```mermaid
+flowchart LR
+  subgraph livebook [Livebook node]
+    CI[collect_input]
+    SO[show_output]
+    Mon[BatchMonitor]
+  end
+  subgraph peers [Peer nodes]
+    CD[classify_data]
+    Svc[Nx.Serving]
+  end
+  CI -->|int| CD
+  CD -->|batched_run| Svc
+  Svc -->|telemetry| Mon
+  CD -->|label| SO
+```
+
+Handoff's allocator prefers the first peer with enough *remaining* `compute`. With
+`compute: 5` per worker and 10 parallel runs, the first five claims land on `worker1` and
+the rest spill to `worker2`. Each worker's `Nx.Serving` then batches its local calls.
+
+## Setup
+
+```elixir
+Mix.install([
+  {:handoff, path: Path.join(__DIR__, "..")},
+  {:nx, "~> 0.9"}
+])
+```
+
+## Pipeline and serving module
+
+Named module captures are required for remote execution. Telemetry is sent to `:batch_monitor`
+on the Livebook node: per-request from `client_preprocessing`, and merged-batch size from the
+serving function (the real batching proof).
+
+The module lives in [`classifier_pipeline.ex`](classifier_pipeline.ex) so peers can compile the same
+source (Livebook cells alone do not produce on-disk BEAM files for `:code.get_object_code/1`).
+
+```elixir
+pipeline_source = File.read!(Path.join(__DIR__, "classifier_pipeline.ex"))
+[{ClassifierPipeline, _binary}] = Code.compile_string(pipeline_source)
+:ok
+```
+
+## Cluster: Livebook node + two peers
+
+Livebook sets a random distribution cookie. Peers must use the same cookie, and worker
+names should be unique per Livebook runtime so stale beams from earlier runs (or from
+`mix` smoke tests) do not reject the connection with `Invalid challenge reply`.
+
+```elixir
+case :os.type() do
+  {:unix, _} ->
+    {"", 0} = System.cmd("epmd", ["-daemon"])
+
+  _ ->
+    :ok
+end
+
+unless Node.alive?() do
+  {:ok, _} = Node.start(:"livebook@127.0.0.1", :longnames)
+end
+
+livebook_node = Node.self()
+cookie = Node.get_cookie()
+
+# Unique per Livebook runtime (avoids colliding with leftover worker1/worker2 nodes)
+runtime_id =
+  livebook_node
+  |> Atom.to_string()
+  |> String.split("@")
+  |> hd()
+  |> String.replace_prefix("livebook_", "")
+
+worker_names = [
+  :"worker1_#{runtime_id}@127.0.0.1",
+  :"worker2_#{runtime_id}@127.0.0.1"
+]
+
+peer_args = [~c"-setcookie", Atom.to_charlist(cookie)]
+
+workers =
+  Enum.map(worker_names, fn name ->
+    connected? = name in Node.list(:connected)
+
+    if connected? do
+      name
+    else
+      case :peer.start(%{name: name, args: peer_args}) do
+        {:ok, _pid, node} ->
+          node
+
+        {:error, {:already_started, _pid}} ->
+          # Stale peer from another cookie/session — stop and recreate.
+          :peer.stop(name)
+
+          {:ok, _pid, node} = :peer.start(%{name: name, args: peer_args})
+          node
+
+        other ->
+          raise "failed to start peer #{inspect(name)}: #{inspect(other)}"
+      end
+    end
+  end)
+
+# Livebook runtimes are `-hidden`; peers may only show up under :connected / :hidden
+for node <- workers do
+  if Node.ping(node) != :pong do
+    raise "peer #{inspect(node)} is not reachable (ping != :pong). Node.list(:connected)=#{inspect(Node.list(:connected))}"
+  end
+end
+
+# Sync Mix code paths and start apps on peers
+for node <- workers do
+  true = :erpc.call(node, :code, :set_path, [:code.get_path()])
+  {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:nx])
+  {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:handoff])
+end
+
+# Compile the pipeline module on each peer from the same source
+for node <- workers do
+  [{ClassifierPipeline, _binary}] = :erpc.call(node, Code, :compile_string, [pipeline_source])
+end
+
+{:ok, _} = Application.ensure_all_started(:handoff)
+
+workers
+```
+
+## Batch monitor on the Livebook node
+
+```elixir
+case Process.whereis(:batch_monitor) do
+  nil ->
+    pid =
+      spawn(fn ->
+        loop = fn loop, acc ->
+          receive do
+            :reset ->
+              loop.(loop, [])
+
+            {:flush, from} ->
+              send(from, {:batch_messages, Enum.reverse(acc)})
+              loop.(loop, [])
+
+            msg ->
+              loop.(loop, [msg | acc])
+          end
+        end
+
+        loop.(loop, [])
+      end)
+
+    Process.register(pid, :batch_monitor)
+
+  pid ->
+    send(pid, :reset)
+end
+
+:ok
+```
+
+## Start Nx.Serving on each peer
+
+```elixir
+for node <- workers do
+  :ok = :erpc.call(node, ClassifierPipeline, :start_serving, [livebook_node])
+end
+
+:ok
+```
+
+## Register resources and discover the cluster
+
+The Livebook node advertises `compute: 0` so it cannot host `classify_data`.
+Each peer advertises `compute: 5` (ten parallel `compute: 1` claims therefore fill worker1
+then spill onto worker2).
+
+`SimpleAllocator` falls back to `Node.self()` when no node satisfies the cost — that produces
+`Resources unavailable ... on node livebook_...` if peers are missing or still at `%{}`.
+
+```elixir
+livebook_caps = %{cpu: 4, memory: 1024, compute: 0}
+worker_caps = %{cpu: 4, memory: 1024, compute: 5}
+
+:ok = Handoff.register_node(Node.self(), livebook_caps)
+
+for node <- workers do
+  # Register on the peer using that node's Node.self() (source of get_capabilities/0)
+  :ok = :erpc.call(node, ClassifierPipeline, :register_worker_resources, [worker_caps])
+
+  # Also mirror onto the Livebook tracker (used by request/release at execute time)
+  :ok = Handoff.SimpleResourceTracker.register(node, worker_caps)
+end
+
+{:ok, capabilities} = Handoff.discover_nodes()
+
+# Fail fast if workers are absent or still reporting empty/zero compute
+for node <- workers do
+  remote_caps = :erpc.call(node, Handoff.SimpleResourceTracker, :get_capabilities, [])
+  compute = Map.get(remote_caps, :compute, 0)
+
+  if compute < 1 do
+    raise """
+    Worker #{inspect(node)} is not advertising compute (>= 1).
+    Node.list()=#{inspect(Node.list())}
+    Node.list(:connected)=#{inspect(Node.list(:connected))}
+    remote_caps=#{inspect(remote_caps)}
+    discovered=#{inspect(capabilities)}
+    Re-evaluate the Cluster cell, then this cell.
+    """
+  end
+end
+
+# Expect workers in the discovered map (requires handoff that uses Node.list(:connected))
+for node <- workers do
+  unless Map.has_key?(capabilities, node) do
+    raise """
+    discover_nodes/0 did not return #{inspect(node)}.
+    discovered=#{inspect(Map.keys(capabilities))}
+    Node.list(:connected)=#{inspect(Node.list(:connected))}
+    Re-run Mix.install / restart the runtime so it picks up the local handoff fix.
+    """
+  end
+end
+
+capabilities
+```
+
+## Run 10 parallel DAG instances
+
+```elixir
+# Refresh discovery so execute sees current peer capabilities
+{:ok, _} = Handoff.discover_nodes()
+
+send(:batch_monitor, :reset)
+
+tasks =
+  for i <- 1..10 do
+    Task.async(fn ->
+      dag = ClassifierPipeline.build_dag(i, livebook_node)
+      Handoff.execute(dag)
+    end)
+  end
+
+results =
+  tasks
+  |> Task.await_many(60_000)
+  |> Enum.map(fn
+    {:ok, %{results: results, allocations: allocations}} ->
+      %{show_output: results[:show_output], allocations: allocations}
+
+    other ->
+      other
+  end)
+
+send(:batch_monitor, {:flush, self()})
+
+batch_messages =
+  receive do
+    {:batch_messages, messages} -> messages
+  after
+    2_000 -> []
+  end
+
+%{
+  results: results,
+  batch_messages: batch_messages,
+  merged_batches:
+    for {:merged_batch, node, size, contents} <- batch_messages do
+      %{node: node, size: size, contents: contents}
+    end,
+  requests_by_node:
+    batch_messages
+    |> Enum.filter(&match?({:request, _, _}, &1))
+    |> Enum.group_by(fn {:request, node, _} -> node end, fn {:request, _, value} -> value end)
+}
+```
+
+Inspect `merged_batches`: sizes greater than 1 mean `Nx.Serving` coalesced parallel
+`classify_data` calls. `allocations` should place `:classify_data` on a worker and keep
+`:collect_input` / `:show_output` on the Livebook node.

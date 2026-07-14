@@ -78,11 +78,13 @@ defmodule Handoff.DistributedTestFunctions do
   """
   def notify_and_wait(test_pid, function_id, value) do
     send(test_pid, {:started, function_id, self()})
+
     receive do
       :continue -> :ok
     after
       10_000 -> raise "Timeout waiting for :continue message"
     end
+
     value
   end
 
@@ -91,11 +93,13 @@ defmodule Handoff.DistributedTestFunctions do
   """
   def notify_and_wait_with_dep(_dep_result, test_pid, function_id, value) do
     send(test_pid, {:started, function_id, self()})
+
     receive do
       :continue -> :ok
     after
       10_000 -> raise "Timeout waiting for :continue message"
     end
+
     value
   end
 
@@ -118,6 +122,14 @@ defmodule Handoff.DistributedTestFunctions do
     send(test_pid, {:started, function_id})
     Process.sleep(10)
     send(test_pid, {:completed, function_id})
+    value
+  end
+
+  @doc """
+  Identity that sleeps so concurrent DAG resource claims overlap.
+  """
+  def slow_identity(value, sleep_ms \\ 150) do
+    Process.sleep(sleep_ms)
     value
   end
 end

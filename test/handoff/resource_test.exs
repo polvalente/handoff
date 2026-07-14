@@ -202,6 +202,132 @@ defmodule Handoff.ResourceTest do
     end
   end
 
+  describe "allocate_and_claim/3" do
+    test "spills to the next node after the first is saturated" do
+      node_a = :claim_spill_a@localhost
+      node_b = :claim_spill_b@localhost
+
+      :ok = SimpleResourceTracker.register(Node.self(), %{compute: 0})
+      :ok = SimpleResourceTracker.register(node_a, %{compute: 2})
+      :ok = SimpleResourceTracker.register(node_b, %{compute: 2})
+
+      nodes = [Node.self(), node_a, node_b]
+
+      fun = fn id ->
+        %Function{
+          id: id,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [id],
+          cost: %{compute: 1}
+        }
+      end
+
+      assert {:ok, %{c1: ^node_a}} =
+               SimpleResourceTracker.allocate_and_claim([fun.(:c1)], nodes)
+
+      assert {:ok, %{c2: ^node_a}} =
+               SimpleResourceTracker.allocate_and_claim([fun.(:c2)], nodes)
+
+      assert {:ok, %{c3: ^node_b}} =
+               SimpleResourceTracker.allocate_and_claim([fun.(:c3)], nodes)
+
+      assert {:ok, %{c4: ^node_b}} =
+               SimpleResourceTracker.allocate_and_claim([fun.(:c4)], nodes)
+    end
+
+    test "returns error when no node has remaining capacity" do
+      node_a = :claim_full_a@localhost
+      node_b = :claim_full_b@localhost
+
+      :ok = SimpleResourceTracker.register(Node.self(), %{compute: 0})
+      :ok = SimpleResourceTracker.register(node_a, %{compute: 1})
+      :ok = SimpleResourceTracker.register(node_b, %{compute: 1})
+
+      nodes = [Node.self(), node_a, node_b]
+      fun = %Function{id: :x, args: [], code: &Elixir.Function.identity/1, cost: %{compute: 1}}
+
+      assert {:ok, _} = SimpleResourceTracker.allocate_and_claim([%{fun | id: :a}], nodes)
+      assert {:ok, _} = SimpleResourceTracker.allocate_and_claim([%{fun | id: :b}], nodes)
+
+      assert {:error, :resources_unavailable} =
+               SimpleResourceTracker.allocate_and_claim([%{fun | id: :c}], nodes)
+    end
+
+    test "splits a multi-function claim across nodes in one call" do
+      node_a = :claim_batch_a@localhost
+      node_b = :claim_batch_b@localhost
+
+      :ok = SimpleResourceTracker.register(Node.self(), %{compute: 0})
+      :ok = SimpleResourceTracker.register(node_a, %{compute: 2})
+      :ok = SimpleResourceTracker.register(node_b, %{compute: 2})
+
+      functions =
+        for i <- 1..4 do
+          %Function{
+            id: :"batch_#{i}",
+            args: [],
+            code: &Elixir.Function.identity/1,
+            cost: %{compute: 1}
+          }
+        end
+
+      assert {:ok, allocations} =
+               SimpleResourceTracker.allocate_and_claim(functions, [
+                 Node.self(),
+                 node_a,
+                 node_b
+               ])
+
+      counts =
+        allocations
+        |> Map.values()
+        |> Enum.frequencies()
+
+      assert counts[node_a] == 2
+      assert counts[node_b] == 2
+    end
+
+    test "releases claimed resources when the claimant process dies" do
+      node_a = :claim_death_a@localhost
+
+      :ok = SimpleResourceTracker.register(Node.self(), %{compute: 0})
+      :ok = SimpleResourceTracker.register(node_a, %{compute: 1})
+
+      nodes = [Node.self(), node_a]
+      parent = self()
+
+      pid =
+        spawn(fn ->
+          fun = %Function{
+            id: :held,
+            args: [],
+            code: &Elixir.Function.identity/1,
+            cost: %{compute: 1}
+          }
+
+          assert {:ok, %{held: ^node_a}} =
+                   SimpleResourceTracker.allocate_and_claim([fun], nodes, self())
+
+          send(parent, :claimed)
+
+          receive do
+            :exit_now -> :ok
+          end
+        end)
+
+      assert_receive :claimed, 1_000
+      refute SimpleResourceTracker.available?(node_a, %{compute: 1})
+
+      ref = Process.monitor(pid)
+      send(pid, :exit_now)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+      Process.sleep(50)
+
+      assert SimpleResourceTracker.available?(node_a, %{compute: 1})
+    end
+  end
+
   describe "function allocation" do
     test "first_available allocation strategy", %{test_nodes: test_nodes} do
       # Get nodes for testing
