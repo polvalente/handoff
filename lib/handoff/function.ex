@@ -26,7 +26,9 @@ defmodule Handoff.Function do
   * `:parallelism` - Number of concurrent stage-worker replicas when streaming
     (default `1`). Ignored by `Handoff.execute/2`.
   * `:batch_size` / `:batch_timeout` - Optional batching controls for streaming stages.
-    Ignored by `Handoff.execute/2`.
+    When either is set, ready items are accumulated until the buffer reaches
+    `:batch_size` or `:batch_timeout` milliseconds elapse since the first buffered
+    item (whichever comes first). Ignored by `Handoff.execute/2`.
 
   ## Streaming calling convention
 
@@ -36,6 +38,20 @@ defmodule Handoff.Function do
       code.(state, arg1, ..., argN)  # or code.(state, [args]) for `:as_list`
 
   When `:init` is `nil`, `:code` keeps the stateless signature used by `Handoff.execute/2`.
+
+  ### Batched streaming
+
+  When `:batch_size` and/or `:batch_timeout` is set, `:code` is invoked once per
+  flush with a **list of arg-tuples** (one tuple per buffered item, fields in
+  dependency order). It must return a **same-length list of results**, which are
+  unbatched 1:1 onto the original correlation ids. With `:init`, the return is
+  `{results_list, new_state}` (state advances once per flush):
+
+      code.([{arg1, ...}, ...])              # no :init
+      code.(state, [{arg1, ...}, ...])       # with :init → {[r1, ...], new_state}
+
+  A non-list or wrong-length return raises in the stage/worker (contract
+  violation) rather than silently corrupting downstream correlation ids.
 
   ## Examples
 

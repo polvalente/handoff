@@ -4,7 +4,7 @@ defmodule Handoff.Pipeline.Stage do
 
   Runs `:init` once on start (or once per worker when `:parallelism` > 1) to
   build persistent worker state, joins fan-in inputs by `correlation_id`, and
-  invokes `:code` once per ready item.
+  invokes `:code` once per ready item (or once per batch when batching is on).
 
   ## Parallelism
 
@@ -22,10 +22,22 @@ defmodule Handoff.Pipeline.Stage do
   `DemandDispatcher`, which cannot coexist with the broadcast fan-out this
   pipeline requires — so parallelism is implemented inside the stage after
   the join, not via competing subscriptions.
+
+  ## Batching
+
+  When `function.batch_size` and/or `function.batch_timeout` is set, ready
+  items are accumulated on the code-execution path (this process when
+  `parallelism` is 1, each `Worker` when `parallelism` > 1) and flushed when
+  the buffer reaches `batch_size` or `batch_timeout` elapses since the first
+  buffered item — whichever comes first. Batched `:code` receives a list of
+  arg-tuples and must return a same-length list of results, which are
+  unbatched 1:1 back into individually tagged events. See `Handoff.Function`
+  for the calling convention.
   """
 
   use GenStage
 
+  alias Handoff.Pipeline.Stage.Batch
   alias Handoff.Pipeline.Stage.Worker
 
   @doc false
@@ -69,7 +81,9 @@ defmodule Handoff.Pipeline.Stage do
       worker_state: worker_state,
       workers: workers,
       join: %{},
-      from_to_dep: %{}
+      from_to_dep: %{},
+      batch_buffer: [],
+      batch_timer: nil
     }
 
     {:producer_consumer, state, dispatcher: GenStage.BroadcastDispatcher,
@@ -109,8 +123,23 @@ defmodule Handoff.Pipeline.Stage do
     {:noreply, [{cid, result}], state}
   end
 
+  def handle_info({:worker_results, pairs}, state) when is_list(pairs) do
+    {:noreply, pairs, state}
+  end
+
+  def handle_info({:batch_timeout, ref}, %{batch_timer: ref} = state) do
+    {emitted, state} = flush_batch(%{state | batch_timer: nil})
+    {:noreply, emitted, state}
+  end
+
+  def handle_info({:batch_timeout, _stale}, state) do
+    {:noreply, [], state}
+  end
+
   @impl true
   def terminate(_reason, state) do
+    cancel_batch_timer(state)
+
     Enum.each(state.workers, fn pid ->
       if Process.alive?(pid) do
         GenServer.stop(pid, :shutdown, 5_000)
@@ -134,14 +163,58 @@ defmodule Handoff.Pipeline.Stage do
   end
 
   defp dispatch(%{workers: []} = state, cid, args) do
-    {result, worker_state} = invoke(state.function, state.worker_state, args)
-    {[{cid, result}], %{state | worker_state: worker_state}}
+    if Batch.enabled?(state.function) do
+      enqueue_batch(state, cid, args)
+    else
+      {result, worker_state} = invoke(state.function, state.worker_state, args)
+      {[{cid, result}], %{state | worker_state: worker_state}}
+    end
   end
 
   defp dispatch(%{workers: workers} = state, cid, args) do
     worker = Enum.at(workers, rem(cid, length(workers)))
     Worker.process_async(worker, self(), cid, args)
     {[], state}
+  end
+
+  defp enqueue_batch(state, cid, args) do
+    buffer = state.batch_buffer ++ [{cid, args}]
+    state = maybe_start_batch_timer(%{state | batch_buffer: buffer})
+
+    if Batch.full?(state.function, state.batch_buffer) do
+      flush_batch(state)
+    else
+      {[], state}
+    end
+  end
+
+  defp maybe_start_batch_timer(%{batch_timer: nil, function: %{batch_timeout: timeout}} = state)
+       when is_integer(timeout) do
+    ref = make_ref()
+    Process.send_after(self(), {:batch_timeout, ref}, timeout)
+    %{state | batch_timer: ref}
+  end
+
+  defp maybe_start_batch_timer(state), do: state
+
+  defp flush_batch(%{batch_buffer: []} = state), do: {[], state}
+
+  defp flush_batch(state) do
+    state = cancel_batch_timer(state)
+    items = state.batch_buffer
+    state = %{state | batch_buffer: []}
+
+    {pairs, worker_state} =
+      Batch.invoke_and_unbatch(state.function, state.worker_state, items)
+
+    {pairs, %{state | worker_state: worker_state}}
+  end
+
+  defp cancel_batch_timer(%{batch_timer: nil} = state), do: state
+
+  defp cancel_batch_timer(%{batch_timer: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | batch_timer: nil}
   end
 
   defp ready?(args, partial) do

@@ -59,6 +59,20 @@ defmodule Handoff.PipelineTest do
       send(test_pid, {:started, function_id, self()})
       {a, b}
     end
+
+    def batch_double(batch) do
+      Enum.map(batch, fn {value} -> value * 2 end)
+    end
+
+    def batch_double_counting(batch, agent) do
+      Agent.update(agent, fn s ->
+        %{s | calls: s.calls + 1, batches: s.batches ++ [batch]}
+      end)
+
+      Enum.map(batch, fn {value} -> value * 2 end)
+    end
+
+    def batch_wrong_length(_batch), do: [:only_one]
   end
 
   describe "Handoff.stream/2" do
@@ -475,6 +489,264 @@ defmodule Handoff.PipelineTest do
       # Serial is ~n*delay; parallel with 4 workers should be clearly faster
       assert parallel_us < serial_us * 0.7,
              "expected parallelism=4 (#{parallel_us}µs) to beat parallelism=1 (#{serial_us}µs)"
+    end
+  end
+
+  describe "batching" do
+    test "batch_size flushes at N items with one :code call and unbatches results" do
+      {:ok, agent} = Agent.start_link(fn -> %{calls: 0, batches: []} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          batch_size: 3,
+          code: &StreamHelpers.batch_double_counting/2,
+          extra_args: [agent]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      inputs = [1, 2, 3, 4, 5, 6]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(length(inputs))
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 2_000) == Enum.map(inputs, &(&1 * 2))
+
+      %{calls: calls, batches: batches} = Agent.get(agent, & &1)
+      assert calls == 2
+      assert batches == [[{1}, {2}, {3}], [{4}, {5}, {6}]]
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "batch_timeout flushes a partial batch when no more items arrive" do
+      {:ok, agent} = Agent.start_link(fn -> %{calls: 0, batches: []} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          batch_size: 10,
+          batch_timeout: 50,
+          code: &StreamHelpers.batch_double_counting/2,
+          extra_args: [agent]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      inputs = [7, 8]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(length(inputs))
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 2_000) == [14, 16]
+
+      %{calls: calls, batches: batches} = Agent.get(agent, & &1)
+      assert calls == 1
+      assert batches == [[{7}, {8}]]
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "batch_timeout alone flushes when batch_size is nil" do
+      {:ok, agent} = Agent.start_link(fn -> %{calls: 0, batches: []} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          batch_size: nil,
+          batch_timeout: 50,
+          code: &StreamHelpers.batch_double_counting/2,
+          extra_args: [agent]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      inputs = [11, 12]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(length(inputs))
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 2_000) == [22, 24]
+
+      %{calls: calls, batches: batches} = Agent.get(agent, & &1)
+      assert calls == 1
+      assert batches == [[{11}, {12}]]
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "batch_size wins when both knobs are set and the batch fills first" do
+      {:ok, agent} = Agent.start_link(fn -> %{calls: 0, batches: []} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          batch_size: 3,
+          # Far longer than push + flush latency so size must win
+          batch_timeout: 5_000,
+          code: &StreamHelpers.batch_double_counting/2,
+          extra_args: [agent]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      inputs = [1, 2, 3]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(length(inputs))
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 2_000) == [2, 4, 6]
+
+      %{calls: calls, batches: batches} = Agent.get(agent, & &1)
+      assert calls == 1
+      assert batches == [[{1}, {2}, {3}]]
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "batching with parallelism > 1 forms per-worker batches and preserves order" do
+      {:ok, agent} = Agent.start_link(fn -> %{calls: 0, batches: []} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          parallelism: 2,
+          batch_size: 2,
+          code: &StreamHelpers.batch_double_counting/2,
+          extra_args: [agent]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      assert length(Handoff.Pipeline.Stage.worker_pids(handle.stages[:batched])) == 2
+
+      # cids 0,1,2,3 → rem(cid, 2) partitions to workers [0,1,0,1]
+      inputs = [10, 20, 30, 40]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(length(inputs))
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 2_000) == Enum.map(inputs, &(&1 * 2))
+
+      %{calls: calls, batches: batches} = Agent.get(agent, & &1)
+      assert calls == 2
+
+      # Each worker flushes its own size-2 batch; completion order is racy
+      assert Enum.sort(batches) == [[{10}, {30}], [{20}, {40}]]
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "batching after an upstream parallelism > 1 node preserves aggregator order" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :slow,
+          args: [:source],
+          parallelism: 4,
+          code: &StreamHelpers.slow_identity/2,
+          extra_args: [30]
+        })
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:slow],
+          batch_size: 3,
+          batch_timeout: 100,
+          code: &StreamHelpers.batch_double/1
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      inputs = [3, 1, 4, 1, 5, 9]
+      n = length(inputs)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(n)
+        end)
+
+      Process.sleep(20)
+      Enum.each(inputs, fn v -> assert {:ok, _} = Pipeline.push(handle, v) end)
+
+      assert Task.await(collect, 5_000) == Enum.map(inputs, &(&1 * 2))
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "mismatched batched :code result length crashes the stage with a clear error" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :batched,
+          args: [:source],
+          batch_size: 2,
+          code: &StreamHelpers.batch_wrong_length/1
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      stage = handle.stages[:batched]
+      ref = Process.monitor(stage)
+
+      # Stream subscriber so demand flows; it may die with the pipeline
+      _collect =
+        Task.async(fn ->
+          try do
+            handle |> Pipeline.stream() |> Enum.take(2)
+          catch
+            :exit, _ -> :pipeline_exited
+          end
+        end)
+
+      Process.sleep(20)
+      assert {:ok, _} = Pipeline.push(handle, 1)
+      assert {:ok, _} = Pipeline.push(handle, 2)
+
+      assert_receive {:DOWN, ^ref, :process, ^stage, reason}, 2_000
+
+      message =
+        case reason do
+          {%RuntimeError{message: msg}, _} -> msg
+          {exception, _} when is_exception(exception) -> Exception.message(exception)
+          other -> inspect(other)
+        end
+
+      assert message =~ "same-length" or message =~ "list of 2 results"
     end
   end
 end
