@@ -39,21 +39,7 @@ defmodule Handoff.Pipeline.Stage.Worker do
 
   @impl true
   def handle_cast({:process, stage, cid, args}, state) do
-    state = %{state | stage: stage}
-
-    if Batch.enabled?(state.function) do
-      {:noreply, enqueue_batch(state, cid, args)}
-    else
-      case Invoke.safe(do: invoke(state.function, state.worker_state, args)) do
-        {:ok, {result, worker_state}} ->
-          send(stage, {:worker_result, cid, result})
-          {:noreply, %{state | worker_state: worker_state}}
-
-        {:error, reason} ->
-          send(stage, {:worker_result, cid, {:error, reason}})
-          {:noreply, state}
-      end
-    end
+    {:noreply, enqueue_batch(%{state | stage: stage}, cid, args)}
   end
 
   @impl true
@@ -117,32 +103,6 @@ defmodule Handoff.Pipeline.Stage.Worker do
     %{state | batch_timer: nil}
   end
 
-  defp invoke(%{init: nil} = function, _worker_state, args) do
-    call_args =
-      case function.argument_inclusion do
-        :variadic -> args ++ function.extra_args
-        :as_list -> [args | function.extra_args]
-      end
-
-    {apply_code(function.code, call_args), nil}
-  end
-
-  defp invoke(function, worker_state, args) do
-    call_args =
-      case function.argument_inclusion do
-        :variadic -> [worker_state | args] ++ function.extra_args
-        :as_list -> [worker_state, args | function.extra_args]
-      end
-
-    case apply_code(function.code, call_args) do
-      {result, new_state} ->
-        {result, new_state}
-
-      other ->
-        raise "streaming :code with :init set must return {result, new_state}, got: #{inspect(other)}"
-    end
-  end
-
   defp run_init(nil), do: nil
 
   defp run_init({module, fun, args}) when is_atom(module) and is_atom(fun) and is_list(args) do
@@ -154,7 +114,4 @@ defmodule Handoff.Pipeline.Stage.Worker do
   defp run_init(fun) when is_function(fun) do
     raise ":init named capture must have arity 0, got: #{inspect(fun)}"
   end
-
-  defp apply_code(code, args) when is_function(code), do: apply(code, args)
-  defp apply_code({module, fun}, args), do: apply(module, fun, args)
 end

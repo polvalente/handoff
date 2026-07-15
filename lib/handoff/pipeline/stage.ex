@@ -171,15 +171,6 @@ defmodule Handoff.Pipeline.Stage do
   end
 
   @impl true
-  def handle_info({:worker_result, cid, {:error, reason}}, state) do
-    {emitted, state} = fail_item(state, cid, reason)
-    {:noreply, emitted, state}
-  end
-
-  def handle_info({:worker_result, cid, result}, state) do
-    {:noreply, [{cid, result}], state}
-  end
-
   def handle_info({:worker_results, pairs}, state) when is_list(pairs) do
     {emitted, state} =
       Enum.reduce(pairs, {[], state}, fn
@@ -342,17 +333,7 @@ defmodule Handoff.Pipeline.Stage do
   defp notify_aggregator(_state, _cid, _reason), do: :ok
 
   defp dispatch(%{workers: []} = state, cid, args) do
-    if Batch.enabled?(state.function) do
-      enqueue_batch(state, cid, args)
-    else
-      case Invoke.safe(do: invoke(state.function, state.worker_state, args)) do
-        {:ok, {result, worker_state}} ->
-          {[{cid, result}], %{state | worker_state: worker_state}}
-
-        {:error, reason} ->
-          fail_item(state, cid, reason)
-      end
-    end
+    enqueue_batch(state, cid, args)
   end
 
   defp dispatch(%{workers: workers} = state, cid, args) do
@@ -466,32 +447,6 @@ defmodule Handoff.Pipeline.Stage do
 
       _other ->
         Map.fetch!(partial, dep_id)
-    end
-  end
-
-  defp invoke(%{init: nil} = function, _worker_state, args) do
-    call_args =
-      case function.argument_inclusion do
-        :variadic -> args ++ function.extra_args
-        :as_list -> [args | function.extra_args]
-      end
-
-    {apply_code(function.code, call_args), nil}
-  end
-
-  defp invoke(function, worker_state, args) do
-    call_args =
-      case function.argument_inclusion do
-        :variadic -> [worker_state | args] ++ function.extra_args
-        :as_list -> [worker_state, args | function.extra_args]
-      end
-
-    case apply_code(function.code, call_args) do
-      {result, new_state} ->
-        {result, new_state}
-
-      other ->
-        raise "streaming :code with :init set must return {result, new_state}, got: #{inspect(other)}"
     end
   end
 
