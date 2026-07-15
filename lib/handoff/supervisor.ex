@@ -21,6 +21,8 @@ defmodule Handoff.Supervisor do
       {Handoff.ResultStore, []},
       resource_tracker,
       {Handoff.DataLocationRegistry, []},
+      {Task.Supervisor, name: Handoff.TaskSupervisor},
+      {Handoff.ExecutionSupervisor, []},
       {Handoff.DistributedExecutor, Keyword.put(opts, :resource_tracker, resource_tracker)},
       {Handoff.DistributedResultStore, []}
     ]

@@ -57,6 +57,10 @@ defmodule Handoff do
   - opts: Optional execution settings
     - :allocation_strategy - Strategy for allocating functions to nodes
       (:first_available or :load_balanced, defaults to :first_available)
+    - :max_retries - Default retries for failed functions (default: 3).
+      Overridden per function when `Handoff.Function.max_retries` is set.
+    - :max_concurrency - Maximum number of ready functions to run in parallel
+      within a DAG (default: `System.schedulers_online()`)
 
   ## Returns
   - `{:ok, %{dag_id: dag_id, results: results_map}}` with the DAG ID and a map of function IDs to results on success
@@ -75,7 +79,10 @@ defmodule Handoff do
   - opts: Optional execution settings
     - :allocation_strategy - Strategy for allocating functions to nodes
       (:first_available or :load_balanced, defaults to :first_available)
-    - :max_retries - Maximum number of times to retry failed functions (default: 3)
+    - :max_retries - Default retries for failed functions (default: 3).
+      Overridden per function when `Handoff.Function.max_retries` is set.
+    - :max_concurrency - Maximum number of ready functions to run in parallel
+      within a DAG (default: `System.schedulers_online()`)
 
   ## Returns
   - `{:ok, %{dag_id: dag_id, results: results_map}}` with the DAG ID and a map of function IDs to results on success
