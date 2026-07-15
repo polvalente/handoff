@@ -194,9 +194,8 @@ defmodule Handoff.Pipeline.Aggregator do
   defp schedule_join_gc(state, _cid), do: state
 
   defp clear_join(state, cid) do
-    state
-    |> cancel_join_timer(cid)
-    |> then(fn st -> %{st | join: Map.delete(st.join, cid)} end)
+    state = cancel_join_timer(state, cid)
+    %{state | join: Map.delete(state.join, cid)}
   end
 
   defp cancel_join_timer(state, cid) do
