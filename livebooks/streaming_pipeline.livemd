@@ -1,0 +1,91 @@
+# Streaming Pipeline Example
+
+## Introduction
+
+This Livebook demonstrates Handoff's GenStage streaming mode: a DAG is compiled
+once into warm stages (paying setup cost in `:init`), then many items are pushed
+concurrently while output order matches push order.
+
+The scenario mirrors a common pattern — expensive one-time disk/model load, then
+cheap per-item processing.
+
+## Setup
+
+```elixir
+Mix.install([
+  {:handoff, path: Path.join(__DIR__, "..")}
+])
+
+# `Mix.install` starts the `:handoff` application (supervisors + tracker).
+# Do not call `Handoff.start/0` here — it would hit `{:already_started, _}`.
+```
+
+```elixir
+defmodule StreamDemo do
+  @moduledoc false
+
+  # Simulate an expensive one-time load (e.g. reading a model/weights from disk).
+  def load_model do
+    Process.sleep(200)
+    %{factor: 10, loaded_at: System.monotonic_time(:millisecond)}
+  end
+
+  def process(%{factor: factor} = model, value) do
+    {factor * value, model}
+  end
+end
+```
+
+## DAG: setup once, process many
+
+```elixir
+alias Handoff.{DAG, Function, Pipeline}
+
+dag =
+  DAG.new()
+  |> DAG.add_function(%Function{
+    id: :item,
+    args: [],
+    code: nil,
+    type: :input
+  })
+  |> DAG.add_function(%Function{
+    id: :scale,
+    args: [:item],
+    init: &StreamDemo.load_model/0,
+    code: &StreamDemo.process/2
+  })
+
+:ok = DAG.validate(dag)
+```
+
+```mermaid
+graph LR
+  item --> scale
+```
+
+## Run the pipeline
+
+```elixir
+{:ok, handle} = Handoff.stream(dag)
+
+collect =
+  Task.async(fn ->
+    handle |> Pipeline.stream() |> Enum.take(20)
+  end)
+
+# Many concurrent pushes — output order still matches push order.
+1..20
+|> Task.async_stream(fn n -> Pipeline.push(handle, n) end, max_concurrency: 10)
+|> Stream.run()
+
+results = Task.await(collect)
+IO.inspect(results, label: "ordered results")
+
+:ok = Pipeline.stop(handle)
+
+results
+```
+
+Expected: `[10, 20, 30, ..., 200]` — each item scaled by the once-loaded factor,
+in the same order as pushes (correlation ids 0..19).

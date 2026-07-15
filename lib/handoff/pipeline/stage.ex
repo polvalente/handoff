@@ -10,6 +10,30 @@ defmodule Handoff.Pipeline.Stage do
   subscribes to their transitive non-inline leaves and evaluates the inline
   `:code` when resolving args (same absorb-into-dependent model as batch execute).
 
+  ## Failure semantics
+
+  Exceptions raised by `:code` (or contract violations) are **rescued per item**.
+  The originating stage notifies the pipeline `Aggregator` directly with
+  `{:item_error, cid, reason}` and emits a one-hop `{cid, {:suppress, reason}}`
+  to immediate GenStage consumers so they drop that correlation id without
+  invoking `:code` or forwarding further. Sibling branches keep running.
+  Stream mode does **not** retry (`Function.max_retries` is execute-only).
+
+  A hard EXIT of this GenStage process (or its host node) still tears down the
+  whole pipeline — see `Handoff.Pipeline.Coordinator`.
+
+  ## Backpressure
+
+  Upstream subscriptions use GenStage defaults of `max_demand: 10` and
+  `min_demand: 1` (overridable via `:max_demand` / `:min_demand` on
+  `Handoff.stream/2`).
+
+  ## Join eviction
+
+  When `:join_timeout` (ms) is set on the pipeline, partial fan-in buffers for a
+  correlation id are dropped after the timeout via the same fail path (direct
+  Aggregator notify + one-hop suppress).
+
   ## Parallelism
 
   When `function.parallelism` is greater than 1, this stage keeps a **single**
@@ -41,8 +65,11 @@ defmodule Handoff.Pipeline.Stage do
 
   use GenStage
 
+  alias Handoff.Pipeline.Invoke
   alias Handoff.Pipeline.Stage.Batch
   alias Handoff.Pipeline.Stage.Worker
+
+  require Invoke
 
   @doc false
   def start_link(opts) do
@@ -62,23 +89,28 @@ defmodule Handoff.Pipeline.Stage do
     producers = Keyword.get(opts, :producers, [])
     all_functions = Keyword.get(opts, :all_functions, %{function.id => function})
     parallelism = max(function.parallelism || 1, 1)
+    join_timeout = Keyword.get(opts, :join_timeout)
+    max_demand = Keyword.get(opts, :max_demand, 10)
+    min_demand = Keyword.get(opts, :min_demand, 1)
 
-    {workers, worker_state} =
+    {workers, worker_monitors, worker_state} =
       if parallelism > 1 do
-        workers =
+        workers_with_refs =
           Enum.map(1..parallelism, fn _ ->
             {:ok, pid} = Worker.start(function)
-            pid
+            {pid, Process.monitor(pid)}
           end)
 
-        {workers, nil}
+        workers = Enum.map(workers_with_refs, fn {pid, _} -> pid end)
+        monitors = Map.new(workers_with_refs, fn {pid, ref} -> {ref, pid} end)
+        {workers, monitors, nil}
       else
-        {[], run_init(function.init)}
+        {[], %{}, run_init(function.init)}
       end
 
     subscribe_to =
       Enum.map(producers, fn {pid, dep_id} ->
-        {pid, max_demand: 10, min_demand: 1, dep_id: dep_id}
+        {pid, max_demand: max_demand, min_demand: min_demand, dep_id: dep_id}
       end)
 
     leaf_deps =
@@ -92,7 +124,11 @@ defmodule Handoff.Pipeline.Stage do
       leaf_deps: leaf_deps,
       worker_state: worker_state,
       workers: workers,
+      worker_monitors: worker_monitors,
+      aggregator: Keyword.get(opts, :aggregator),
       join: %{},
+      join_timers: %{},
+      join_timeout: join_timeout,
       from_to_dep: %{},
       batch_buffer: [],
       batch_timer: nil
@@ -113,6 +149,10 @@ defmodule Handoff.Pipeline.Stage do
   end
 
   @impl true
+  def handle_call({:set_aggregator, aggregator}, _from, state) when is_pid(aggregator) do
+    {:reply, :ok, [], %{state | aggregator: aggregator}}
+  end
+
   def handle_call(:worker_pids, _from, state) do
     {:reply, state.workers, [], state}
   end
@@ -131,12 +171,27 @@ defmodule Handoff.Pipeline.Stage do
   end
 
   @impl true
+  def handle_info({:worker_result, cid, {:error, reason}}, state) do
+    {emitted, state} = fail_item(state, cid, reason)
+    {:noreply, emitted, state}
+  end
+
   def handle_info({:worker_result, cid, result}, state) do
     {:noreply, [{cid, result}], state}
   end
 
   def handle_info({:worker_results, pairs}, state) when is_list(pairs) do
-    {:noreply, pairs, state}
+    {emitted, state} =
+      Enum.reduce(pairs, {[], state}, fn
+        {cid, {:error, reason}}, {acc, st} ->
+          {outs, st} = fail_item(st, cid, reason)
+          {acc ++ outs, st}
+
+        {cid, result}, {acc, st} ->
+          {acc ++ [{cid, result}], st}
+      end)
+
+    {:noreply, emitted, state}
   end
 
   def handle_info({:batch_timeout, ref}, %{batch_timer: ref} = state) do
@@ -148,9 +203,64 @@ defmodule Handoff.Pipeline.Stage do
     {:noreply, [], state}
   end
 
+  def handle_info({:join_timeout, cid}, state) do
+    case Map.get(state.join, cid) do
+      nil ->
+        {:noreply, [], state}
+
+      :suppressed ->
+        {:noreply, [], state}
+
+      :timed_out ->
+        {:noreply, [], state}
+
+      _partial ->
+        {emitted, state} = fail_item(state, cid, :join_timeout)
+        {:noreply, emitted, state}
+    end
+  end
+
+  def handle_info({:gc_join, cid}, state) do
+    state =
+      case Map.get(state.join, cid) do
+        tombstone when tombstone in [:timed_out, :suppressed] ->
+          %{state | join: Map.delete(state.join, cid)}
+
+        _ ->
+          state
+      end
+
+    {:noreply, [], state}
+  end
+
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Map.pop(state.worker_monitors, ref) do
+      {nil, _} ->
+        {:noreply, [], state}
+
+      {^pid, monitors} ->
+        # Unexpected worker death: replace the slot. In-flight cid (if any) is
+        # lost unless the worker already sent an error — fire-and-forget.
+        index = Enum.find_index(state.workers, &(&1 == pid))
+        {:ok, new_pid} = Worker.start(state.function)
+        new_ref = Process.monitor(new_pid)
+
+        workers =
+          if index do
+            List.replace_at(state.workers, index, new_pid)
+          else
+            state.workers ++ [new_pid]
+          end
+
+        {:noreply, [],
+         %{state | workers: workers, worker_monitors: Map.put(monitors, new_ref, new_pid)}}
+    end
+  end
+
   @impl true
   def terminate(_reason, state) do
     cancel_batch_timer(state)
+    Enum.each(Map.keys(state.join_timers), &cancel_join_timer_ref(state, &1))
 
     Enum.each(state.workers, fn pid ->
       if Process.alive?(pid) do
@@ -161,27 +271,87 @@ defmodule Handoff.Pipeline.Stage do
     :ok
   end
 
+  defp ingest(state, cid, _dep_id, {:suppress, _reason}) do
+    accept_suppress(state, cid)
+  end
+
   defp ingest(state, cid, dep_id, value) do
-    partial = Map.get(state.join, cid, %{})
-    partial = Map.put(partial, dep_id, value)
+    case Map.get(state.join, cid) do
+      tombstone when tombstone in [:timed_out, :suppressed] ->
+        {[], state}
 
-    if ready?(state.leaf_deps, partial) do
-      args =
-        Enum.map(state.function.args, &resolve_arg(&1, partial, state.all_functions))
+      partial ->
+        partial = partial || %{}
+        first? = partial == %{}
+        partial = Map.put(partial, dep_id, value)
 
-      state = %{state | join: Map.delete(state.join, cid)}
-      dispatch(state, cid, args)
-    else
-      {[], %{state | join: Map.put(state.join, cid, partial)}}
+        state =
+          if first? do
+            maybe_arm_join_timer(state, cid)
+          else
+            state
+          end
+
+        if ready?(state.leaf_deps, partial) do
+          state = clear_join(state, cid)
+
+          args =
+            Enum.map(state.function.args, &resolve_arg(&1, partial, state.all_functions))
+
+          dispatch(state, cid, args)
+        else
+          {[], %{state | join: Map.put(state.join, cid, partial)}}
+        end
     end
   end
+
+  defp accept_suppress(state, cid) do
+    case Map.get(state.join, cid) do
+      :suppressed ->
+        {[], state}
+
+      :timed_out ->
+        {[], state}
+
+      _ ->
+        state =
+          state
+          |> clear_join(cid)
+          |> put_suppress_tombstone(cid)
+
+        # One-hop only: do not forward suppress further.
+        {[], state}
+    end
+  end
+
+  defp fail_item(state, cid, reason) do
+    notify_aggregator(state, cid, reason)
+
+    state =
+      state
+      |> clear_join(cid)
+      |> put_suppress_tombstone(cid)
+
+    {[{cid, {:suppress, reason}}], state}
+  end
+
+  defp notify_aggregator(%{aggregator: pid}, cid, reason) when is_pid(pid) do
+    send(pid, {:item_error, cid, reason})
+  end
+
+  defp notify_aggregator(_state, _cid, _reason), do: :ok
 
   defp dispatch(%{workers: []} = state, cid, args) do
     if Batch.enabled?(state.function) do
       enqueue_batch(state, cid, args)
     else
-      {result, worker_state} = invoke(state.function, state.worker_state, args)
-      {[{cid, result}], %{state | worker_state: worker_state}}
+      case Invoke.safe(do: invoke(state.function, state.worker_state, args)) do
+        {:ok, {result, worker_state}} ->
+          {[{cid, result}], %{state | worker_state: worker_state}}
+
+        {:error, reason} ->
+          fail_item(state, cid, reason)
+      end
     end
   end
 
@@ -218,10 +388,16 @@ defmodule Handoff.Pipeline.Stage do
     items = state.batch_buffer
     state = %{state | batch_buffer: []}
 
-    {pairs, worker_state} =
-      Batch.invoke_and_unbatch(state.function, state.worker_state, items)
+    case Invoke.safe(do: Batch.invoke_and_unbatch(state.function, state.worker_state, items)) do
+      {:ok, {pairs, worker_state}} ->
+        {pairs, %{state | worker_state: worker_state}}
 
-    {pairs, %{state | worker_state: worker_state}}
+      {:error, reason} ->
+        Enum.reduce(items, {[], state}, fn {cid, _}, {acc, st} ->
+          {outs, st} = fail_item(st, cid, reason)
+          {acc ++ outs, st}
+        end)
+    end
   end
 
   defp cancel_batch_timer(%{batch_timer: nil} = state), do: state
@@ -230,6 +406,43 @@ defmodule Handoff.Pipeline.Stage do
     Process.cancel_timer(ref)
     %{state | batch_timer: nil}
   end
+
+  defp maybe_arm_join_timer(%{join_timeout: timeout} = state, cid) when is_integer(timeout) do
+    ref = Process.send_after(self(), {:join_timeout, cid}, timeout)
+    %{state | join_timers: Map.put(state.join_timers, cid, ref)}
+  end
+
+  defp maybe_arm_join_timer(state, _cid), do: state
+
+  defp put_suppress_tombstone(%{join_timeout: timeout} = state, cid) when is_integer(timeout) do
+    Process.send_after(self(), {:gc_join, cid}, timeout)
+    %{state | join: Map.put(state.join, cid, :suppressed)}
+  end
+
+  defp put_suppress_tombstone(state, cid) do
+    # Default GC so suppress tombstones do not grow without bound.
+    Process.send_after(self(), {:gc_join, cid}, 60_000)
+    %{state | join: Map.put(state.join, cid, :suppressed)}
+  end
+
+  defp clear_join(state, cid) do
+    state
+    |> cancel_join_timer(cid)
+    |> then(fn st -> %{st | join: Map.delete(st.join, cid)} end)
+  end
+
+  defp cancel_join_timer(state, cid) do
+    case Map.pop(state.join_timers, cid) do
+      {nil, _} ->
+        state
+
+      {ref, timers} ->
+        Process.cancel_timer(ref)
+        %{state | join_timers: timers}
+    end
+  end
+
+  defp cancel_join_timer_ref(state, cid), do: cancel_join_timer(state, cid)
 
   defp ready?(leaf_deps, partial) do
     Enum.all?(leaf_deps, &Map.has_key?(partial, &1))

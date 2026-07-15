@@ -7,7 +7,8 @@ Handoff is a library for building and executing Directed Acyclic Graphs (DAGs) o
 - **Graph-based computation**: Define and execute complex computational graphs with dependencies.
 - **Resource-aware scheduling**: Optimize computation based on available resources.
 - **Distributed execution**: Run graph workloads across multiple nodes.
-- **Fault tolerance**: Task retries on failure up to a configured maximum number of retries.
+- **Streaming pipelines**: Compile a DAG once into warm GenStage stages (`Handoff.stream/2`), push many items concurrently, and consume results in push order.
+- **Fault tolerance**: Task retries on failure for `execute/2` (stream mode error-tags items instead).
 
 ## Installation
 
@@ -106,6 +107,35 @@ end
 ```
 
 Note: The `Handoff.DistributedExecutor.execute/2` function returns a map containing the `:dag_id`, the execution `:results` (a map of function ID to its output), and `:allocations` (a map of function ID to the node it ran on).
+
+### Streaming pipelines
+
+For workloads that amortize a one-time setup across many items (e.g. loading a model or dataset once), use `Handoff.stream/2`:
+
+```elixir
+alias Handoff.{DAG, Function, Pipeline}
+
+dag =
+  DAG.new()
+  |> DAG.add_function(%Function{id: :item, args: [], code: nil, type: :input})
+  |> DAG.add_function(%Function{
+    id: :scale,
+    args: [:item],
+    init: {Agent, :start_link, [fn -> 10 end]},
+    code: fn agent, x -> {Agent.get(agent, & &1) * x, agent} end
+  })
+
+{:ok, handle} = Handoff.stream(dag)
+
+task = Task.async(fn -> handle |> Pipeline.stream() |> Enum.take(3) end)
+Enum.each([1, 2, 3], fn v -> Pipeline.push(handle, v) end)
+Task.await(task)
+# => [10, 20, 30]
+
+Pipeline.stop(handle)
+```
+
+See `livebooks/streaming_pipeline.livemd` for a fuller setup-once / process-many example. Stream mode does not retry failed items (`:max_retries` is execute-only).
 
 <!-- TODO: Add note about starting Handoff application if not already running -->
 

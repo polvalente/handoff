@@ -3,7 +3,10 @@ defmodule Handoff.Pipeline.Stage.Worker do
 
   use GenServer
 
+  alias Handoff.Pipeline.Invoke
   alias Handoff.Pipeline.Stage.Batch
+
+  require Invoke
 
   @doc false
   def start_link(function) do
@@ -41,9 +44,15 @@ defmodule Handoff.Pipeline.Stage.Worker do
     if Batch.enabled?(state.function) do
       {:noreply, enqueue_batch(state, cid, args)}
     else
-      {result, worker_state} = invoke(state.function, state.worker_state, args)
-      send(stage, {:worker_result, cid, result})
-      {:noreply, %{state | worker_state: worker_state}}
+      case Invoke.safe(do: invoke(state.function, state.worker_state, args)) do
+        {:ok, {result, worker_state}} ->
+          send(stage, {:worker_result, cid, result})
+          {:noreply, %{state | worker_state: worker_state}}
+
+        {:error, reason} ->
+          send(stage, {:worker_result, cid, {:error, reason}})
+          {:noreply, state}
+      end
     end
   end
 
@@ -89,11 +98,16 @@ defmodule Handoff.Pipeline.Stage.Worker do
     items = state.batch_buffer
     state = %{state | batch_buffer: []}
 
-    {pairs, worker_state} =
-      Batch.invoke_and_unbatch(state.function, state.worker_state, items)
+    case Invoke.safe(do: Batch.invoke_and_unbatch(state.function, state.worker_state, items)) do
+      {:ok, {pairs, worker_state}} ->
+        send(state.stage, {:worker_results, pairs})
+        %{state | worker_state: worker_state}
 
-    send(state.stage, {:worker_results, pairs})
-    %{state | worker_state: worker_state}
+      {:error, reason} ->
+        pairs = Enum.map(items, fn {cid, _} -> {cid, {:error, reason}} end)
+        send(state.stage, {:worker_results, pairs})
+        state
+    end
   end
 
   defp cancel_batch_timer(%{batch_timer: nil} = state), do: state

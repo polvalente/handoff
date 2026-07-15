@@ -20,8 +20,10 @@ defmodule Handoff.Function do
       whenever a dependent needs it (batch and streaming). Must not set `:node`
       or `:init`.
     * `:input` - Streaming source placeholder (`code: nil`); values via `push/2`
-  * `:max_retries` - Optional per-function retry override (`nil` inherits the
-    execute-level `:max_retries`, default 3). Use `0` for no retries.
+  * `:max_retries` - Optional per-function retry override for `Handoff.execute/2`
+    (`nil` inherits the execute-level `:max_retries`, default 3). Use `0` for no
+    retries. **Ignored by `Handoff.stream/2`** (stream mode never retries;
+    failures are error-tagged per item).
   * `:argument_inclusion` - One of :variadic or :as_list (defaults to :variadic)
     * `:variadic` - Pass the list of N arguments as the first N arguments to the function
     * `:as_list` - Pass arguments as a list in the first argument to the function

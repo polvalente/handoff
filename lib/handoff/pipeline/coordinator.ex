@@ -11,16 +11,22 @@ defmodule Handoff.Pipeline.Coordinator do
   On start, regular functions are allocated across cluster nodes via the
   resource tracker (`allocate_and_claim/3`) or `SimpleAllocator` fallback,
   mirroring `Handoff.DAGRunner`. Claims are held for the **pipeline lifetime**
-  and released exactly once in `terminate/2` (on `stop/1` or crash).
+  and released exactly once in `terminate/2` (on `stop/1`, caller death, or
+  crash). The resource tracker also monitors this process as a backup release
+  path when terminate is skipped (`:kill`).
 
   Stages (and optionally pinned inputs) are started on their assigned node.
   Cross-node GenStage subscriptions use plain producer pids.
 
-  ## Node-down / stage-crash policy
+  ## Failure policy
 
-  A remote stage EXIT or node disconnection tears down the whole pipeline
-  (coordinator stops, stages are shut down, held resources released).
-  Per-item recovery is deferred to hardening.
+  * **Per-item `:code` failures** are isolated inside `Handoff.Pipeline.Stage`:
+    the Aggregator is notified directly and immediate consumers get a one-hop
+    suppress (no stream retries). The pipeline keeps running.
+  * **Stage process EXIT / node disconnect** tears down the whole pipeline
+    (coordinator stops, stages shut down, held resources released).
+  * **Caller death** (the process that called `Handoff.Pipeline.start/2`) stops
+    the coordinator the same way.
   """
 
   use GenServer
@@ -44,41 +50,61 @@ defmodule Handoff.Pipeline.Coordinator do
 
     case DAG.validate(dag) do
       :ok ->
-        resource_tracker =
-          Keyword.get(opts, :resource_tracker) ||
-            Application.get_env(:handoff, :resource_tracker, SimpleResourceTracker)
-
-        nodes =
-          Keyword.get(opts, :nodes) || cluster_nodes()
-
-        case allocate_pipeline(dag, resource_tracker, nodes) do
-          {:ok, dag, held_resources} ->
-            case build_pipeline(dag) do
-              {:ok, stages, aggregator, input_ids} ->
-                {:ok,
-                 %{
-                   dag: dag,
-                   stages: stages,
-                   aggregator: aggregator,
-                   input_ids: input_ids,
-                   next_cid: 0,
-                   resource_tracker: resource_tracker,
-                   held_resources: held_resources
-                 }}
-
-              {:error, reason} ->
-                release_held(resource_tracker, held_resources)
-                {:stop, reason}
-            end
-
-          {:error, reason} ->
-            {:stop, reason}
-        end
+        start_validated_pipeline(dag, opts)
 
       {:error, reason} ->
         {:stop, reason}
     end
   end
+
+  defp start_validated_pipeline(dag, opts) do
+    caller_monitor = maybe_monitor_caller(Keyword.get(opts, :caller_pid))
+
+    resource_tracker =
+      Keyword.get(opts, :resource_tracker) ||
+        Application.get_env(:handoff, :resource_tracker, SimpleResourceTracker)
+
+    nodes = Keyword.get(opts, :nodes) || cluster_nodes()
+    pipeline_opts = Keyword.take(opts, [:join_timeout, :max_demand, :min_demand])
+
+    case allocate_pipeline(dag, resource_tracker, nodes) do
+      {:ok, dag, held_resources} ->
+        finish_pipeline_start(
+          dag,
+          resource_tracker,
+          held_resources,
+          pipeline_opts,
+          caller_monitor
+        )
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
+  end
+
+  defp finish_pipeline_start(dag, resource_tracker, held_resources, pipeline_opts, caller_monitor) do
+    case build_pipeline(dag, pipeline_opts) do
+      {:ok, stages, aggregator, input_ids} ->
+        {:ok,
+         %{
+           dag: dag,
+           stages: stages,
+           aggregator: aggregator,
+           input_ids: input_ids,
+           next_cid: 0,
+           resource_tracker: resource_tracker,
+           held_resources: held_resources,
+           caller_monitor: caller_monitor
+         }}
+
+      {:error, reason} ->
+        release_held(resource_tracker, held_resources)
+        {:stop, reason}
+    end
+  end
+
+  defp maybe_monitor_caller(pid) when is_pid(pid), do: Process.monitor(pid)
+  defp maybe_monitor_caller(_), do: nil
 
   @impl true
   def handle_call(:get_handle, _from, state) do
@@ -109,6 +135,10 @@ defmodule Handoff.Pipeline.Coordinator do
   end
 
   @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{caller_monitor: ref} = state) do
+    {:stop, :normal, state}
+  end
+
   def handle_info({:EXIT, _pid, reason}, state) when reason in [:normal, :shutdown] do
     {:noreply, state}
   end
@@ -211,29 +241,29 @@ defmodule Handoff.Pipeline.Coordinator do
     :ok
   end
 
-  defp build_pipeline(dag) do
+  defp build_pipeline(dag, pipeline_opts) do
     input_ids =
       dag.functions
       |> Enum.filter(fn {_id, fun} -> fun.type == :input end)
       |> Enum.map(fn {id, _} -> id end)
 
-    case start_stages(dag) do
+    case start_stages(dag, pipeline_opts) do
       {:ok, stages} ->
-        start_aggregator(dag, stages, input_ids)
+        start_aggregator(dag, stages, input_ids, pipeline_opts)
 
       {:error, _reason} = err ->
         err
     end
   end
 
-  defp start_stages(dag) do
+  defp start_stages(dag, pipeline_opts) do
     order = topological_order(dag)
     all_functions = dag.functions
 
     Enum.reduce_while(order, {:ok, %{}}, fn id, {:ok, stages_acc} ->
       function = Map.fetch!(all_functions, id)
 
-      case start_function_stage(function, stages_acc, all_functions) do
+      case start_function_stage(function, stages_acc, all_functions, pipeline_opts) do
         :skip ->
           {:cont, {:ok, stages_acc}}
 
@@ -249,21 +279,25 @@ defmodule Handoff.Pipeline.Coordinator do
   end
 
   # Inline nodes are absorbed into dependents — no GenStage process.
-  defp start_function_stage(%{type: :inline}, _stages, _all_functions), do: :skip
+  defp start_function_stage(%{type: :inline}, _stages, _all_functions, _opts), do: :skip
 
-  defp start_function_stage(%{type: :input} = function, _stages, _all_functions) do
+  defp start_function_stage(%{type: :input} = function, _stages, _all_functions, _opts) do
     node = function.node || Node.self()
     start_on_node(node, InputStage, id: function.id)
   end
 
-  defp start_function_stage(function, stages, all_functions) do
+  defp start_function_stage(function, stages, all_functions, pipeline_opts) do
     producers = producer_subscriptions(function, stages, all_functions)
     node = function.node || Node.self()
 
-    start_on_node(node, Stage,
-      function: function,
-      producers: producers,
-      all_functions: all_functions
+    start_on_node(
+      node,
+      Stage,
+      [
+        function: function,
+        producers: producers,
+        all_functions: all_functions
+      ] ++ pipeline_opts
     )
   end
 
@@ -286,21 +320,30 @@ defmodule Handoff.Pipeline.Coordinator do
     end
   end
 
-  defp start_aggregator(dag, stages, input_ids) do
+  defp start_aggregator(dag, stages, input_ids, pipeline_opts) do
     sink_producers =
       Enum.map(sink_ids(dag), fn sink_id ->
         {Map.fetch!(stages, sink_id), sink_id}
       end)
 
-    case Aggregator.start_link(sinks: sink_producers) do
+    case Aggregator.start_link([sinks: sink_producers] ++ pipeline_opts) do
       {:ok, aggregator} ->
         Process.link(aggregator)
+        wire_aggregators(dag, stages, aggregator)
         {:ok, stages, aggregator, input_ids}
 
       {:error, reason} ->
         stop_pids(Map.values(stages))
         {:error, reason}
     end
+  end
+
+  defp wire_aggregators(dag, stages, aggregator) do
+    Enum.each(dag.functions, fn {id, fun} ->
+      if fun.type not in [:input, :inline] do
+        :ok = GenServer.call(Map.fetch!(stages, id), {:set_aggregator, aggregator})
+      end
+    end)
   end
 
   defp stop_pids(pids) do

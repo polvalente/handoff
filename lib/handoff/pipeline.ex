@@ -4,6 +4,23 @@ defmodule Handoff.Pipeline do
 
   A pipeline is compiled once from a DAG via `start/2` (or `Handoff.stream/2`).
   Items are pushed with `push/2` and results consumed via `stream/1` in push order.
+
+  ## Options
+
+  Passed through to the coordinator / stages:
+
+  * `:join_timeout` — milliseconds before a partial fan-in join is evicted as
+    `{:error, :join_timeout}` (Stage and Aggregator). Default: no eviction.
+  * `:max_demand` / `:min_demand` — GenStage subscription demand (default `10` / `1`).
+  * `:nodes` / `:resource_tracker` — distributed placement (see Coordinator).
+
+  ## Failure semantics
+
+  Per-item `:code` exceptions notify the Aggregator directly as
+  `{:error, reason}` and suppress further propagation past immediate consumers;
+  the pipeline keeps running. There is **no** stream-mode retry analogous to
+  `Handoff.execute/2`'s `:max_retries`. Stage process death or node loss still
+  tears down the whole pipeline.
   """
 
   @type t :: %__MODULE__{
@@ -19,8 +36,12 @@ defmodule Handoff.Pipeline do
   Starts a streaming pipeline for `dag`.
 
   Returns `{:ok, handle}` without waiting for any items to be processed.
+  Monitors the calling process; if it exits, the pipeline stops and releases
+  resource claims.
   """
   def start(dag, opts \\ []) do
+    opts = Keyword.put_new(opts, :caller_pid, self())
+
     case Handoff.Pipeline.Supervisor.start_coordinator(dag, opts) do
       {:ok, pid} ->
         handle = GenServer.call(pid, :get_handle)
@@ -54,8 +75,16 @@ defmodule Handoff.Pipeline do
 
   @doc """
   Stops the pipeline and tears down all stage processes.
+
+  Idempotent: returns `:ok` if the coordinator is already dead. Resource claims
+  are released exactly once (in coordinator `terminate/2`, with tracker
+  monitoring as a backup).
   """
   def stop(%__MODULE__{coordinator: pid}) do
-    GenServer.stop(pid, :normal)
+    if Process.alive?(pid) do
+      GenServer.stop(pid, :normal)
+    else
+      :ok
+    end
   end
 end

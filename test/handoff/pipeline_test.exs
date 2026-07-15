@@ -4,6 +4,8 @@ defmodule Handoff.PipelineTest do
   alias Handoff.DAG
   alias Handoff.Function
   alias Handoff.Pipeline
+  alias Handoff.Pipeline.InputStage
+  alias Handoff.SimpleResourceTracker
 
   defmodule StreamHelpers do
     @moduledoc false
@@ -73,6 +75,19 @@ defmodule Handoff.PipelineTest do
     end
 
     def batch_wrong_length(_batch), do: [:only_one]
+
+    def boom_on(value, bad) do
+      if value == bad do
+        raise "boom-#{value}"
+      else
+        value * 2
+      end
+    end
+
+    def counting_identity(value, agent) do
+      Agent.update(agent, &(&1 + 1))
+      value
+    end
   end
 
   describe "Handoff.stream/2" do
@@ -825,7 +840,7 @@ defmodule Handoff.PipelineTest do
       assert :ok = Pipeline.stop(handle)
     end
 
-    test "mismatched batched :code result length crashes the stage with a clear error" do
+    test "mismatched batched :code result length error-tags items without crashing the stage" do
       dag =
         DAG.new()
         |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
@@ -838,15 +853,303 @@ defmodule Handoff.PipelineTest do
 
       {:ok, handle} = Pipeline.start(dag)
       stage = handle.stages[:batched]
-      ref = Process.monitor(stage)
 
-      # Stream subscriber so demand flows; it may die with the pipeline
-      _collect =
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(2)
+        end)
+
+      Process.sleep(20)
+      assert {:ok, _} = Pipeline.push(handle, 1)
+      assert {:ok, _} = Pipeline.push(handle, 2)
+
+      results = Task.await(collect, 2_000)
+      assert Process.alive?(stage)
+      assert length(results) == 2
+
+      Enum.each(results, fn
+        {:error, %RuntimeError{message: msg}} ->
+          assert msg =~ "list of 2 results"
+
+        {:error, other} ->
+          assert inspect(other) =~ "list of 2 results"
+      end)
+
+      assert :ok = Pipeline.stop(handle)
+    end
+  end
+
+  describe "hardening: item failure isolation" do
+    test "code exception error-tags the item and subsequent items still flow" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :maybe_boom,
+          args: [:source],
+          code: &StreamHelpers.boom_on/2,
+          extra_args: [2]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      stage = handle.stages[:maybe_boom]
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(3)
+        end)
+
+      Process.sleep(20)
+      assert {:ok, _} = Pipeline.push(handle, 1)
+      assert {:ok, _} = Pipeline.push(handle, 2)
+      assert {:ok, _} = Pipeline.push(handle, 3)
+
+      assert [2, {:error, %RuntimeError{message: "boom-2"}}, 6] = Task.await(collect, 2_000)
+      assert Process.alive?(stage)
+      assert Process.alive?(handle.coordinator)
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "error bypasses downstream :code and still reaches the aggregator" do
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :boom,
+          args: [:source],
+          code: &StreamHelpers.boom_on/2,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :downstream,
+          args: [:boom],
+          code: &StreamHelpers.counting_identity/2,
+          extra_args: [counter]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(2)
+        end)
+
+      Process.sleep(20)
+      assert {:ok, _} = Pipeline.push(handle, 1)
+      assert {:ok, _} = Pipeline.push(handle, 2)
+
+      assert [{:error, %RuntimeError{message: "boom-1"}}, 4] = Task.await(collect, 2_000)
+      # Downstream :code ran only for the successful item, not the suppressed error.
+      assert Agent.get(counter, & &1) == 1
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "diamond: one branch failure completes item while sibling still runs" do
+      {:ok, right_hits} = Agent.start_link(fn -> 0 end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :left,
+          args: [:source],
+          code: &StreamHelpers.boom_on/2,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :right,
+          args: [:source],
+          code: &StreamHelpers.counting_identity/2,
+          extra_args: [right_hits]
+        })
+        |> DAG.add_function(%Function{
+          id: :sink,
+          args: [:left, :right],
+          code: &StreamHelpers.pair/2
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(1)
+        end)
+
+      Process.sleep(20)
+      assert {:ok, _} = Pipeline.push(handle, 1)
+
+      assert [{:error, %RuntimeError{message: "boom-1"}}] = Task.await(collect, 2_000)
+      # Sibling branch still executed.
+      assert Agent.get(right_hits, & &1) == 1
+      # Sink must not have produced a pair (suppress stopped propagation).
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "Stage process EXIT still tears down the whole pipeline" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :work,
+          args: [:source],
+          code: &StreamHelpers.identity/1
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      coord_ref = Process.monitor(handle.coordinator)
+      Process.exit(handle.stages[:work], :kill)
+
+      assert_receive {:DOWN, ^coord_ref, :process, _, _}, 2_000
+    end
+  end
+
+  describe "hardening: join buffer eviction" do
+    defmodule CaptureConsumer do
+      @moduledoc false
+      use GenStage
+
+      def start_link(parent) do
+        GenStage.start_link(__MODULE__, parent)
+      end
+
+      def init(parent), do: {:consumer, parent}
+
+      def handle_events(events, _from, parent) do
+        Enum.each(events, &send(parent, {:stage_event, &1}))
+        {:noreply, [], parent}
+      end
+    end
+
+    defmodule EmitProducer do
+      @moduledoc false
+      use GenStage
+
+      def start_link(id), do: GenStage.start_link(__MODULE__, id)
+
+      def init(id),
+        do:
+          {:producer, %{id: id, demand: 0, queue: :queue.new()},
+           dispatcher: GenStage.DemandDispatcher}
+
+      def emit(pid, event), do: GenStage.cast(pid, {:emit, event})
+
+      def handle_demand(d, state) when d > 0 do
+        dispatch(%{state | demand: state.demand + d})
+      end
+
+      def handle_cast({:emit, event}, state) do
+        dispatch(%{state | queue: :queue.in(event, state.queue)})
+      end
+
+      defp dispatch(%{demand: 0} = state), do: {:noreply, [], state}
+
+      defp dispatch(state) do
+        case :queue.out(state.queue) do
+          {{:value, event}, q} ->
+            {:noreply, [event], %{state | queue: q, demand: state.demand - 1}}
+
+          {:empty, _} ->
+            {:noreply, [], state}
+        end
+      end
+    end
+
+    test "partial aggregator join times out as {:error, :join_timeout}" do
+      {:ok, sink_a} = EmitProducer.start_link(:a)
+      {:ok, sink_b} = EmitProducer.start_link(:b)
+
+      {:ok, agg} =
+        GenStage.start_link(Handoff.Pipeline.Aggregator,
+          sinks: [{sink_a, :a}, {sink_b, :b}],
+          join_timeout: 50
+        )
+
+      {:ok, consumer} = CaptureConsumer.start_link(self())
+      GenStage.sync_subscribe(consumer, to: agg, max_demand: 10, min_demand: 1)
+
+      # Only one sink reports for cid 0 — join stays partial until timeout.
+      EmitProducer.emit(sink_a, {0, :partial})
+
+      assert_receive {:stage_event, {:error, :join_timeout}}, 500
+
+      GenStage.stop(consumer)
+      GenStage.stop(agg)
+      GenStage.stop(sink_a)
+      GenStage.stop(sink_b)
+    end
+
+    test "stage fan-in join timeout emits error and clears the partial buffer" do
+      all_functions = %{
+        a: %Function{id: :a, args: [], code: nil, type: :input},
+        b: %Function{id: :b, args: [], code: nil, type: :input},
+        join: %Function{id: :join, args: [:a, :b], code: &StreamHelpers.pair/2}
+      }
+
+      {:ok, in_a} = GenStage.start_link(InputStage, id: :a)
+      {:ok, in_b} = GenStage.start_link(InputStage, id: :b)
+
+      {:ok, stage} =
+        GenStage.start_link(Handoff.Pipeline.Stage,
+          function: all_functions.join,
+          producers: [{in_a, :a}, {in_b, :b}],
+          all_functions: all_functions,
+          join_timeout: 50
+        )
+
+      {:ok, consumer} = CaptureConsumer.start_link(self())
+      GenStage.sync_subscribe(consumer, to: stage, max_demand: 10, min_demand: 1)
+
+      InputStage.enqueue(in_a, {0, :only_a})
+
+      assert_receive {:stage_event, {0, {:suppress, :join_timeout}}}, 500
+
+      # Late arrival after eviction must not emit a second result for cid 0.
+      InputStage.enqueue(in_b, {0, :late_b})
+      refute_receive {:stage_event, _}, 100
+
+      # Tombstone GC runs after another join_timeout interval
+      Process.sleep(80)
+      %GenStage{state: %{join: join}} = :sys.get_state(stage)
+      refute Map.has_key?(join, 0)
+
+      GenStage.stop(consumer)
+      GenStage.stop(stage)
+      GenStage.stop(in_a)
+      GenStage.stop(in_b)
+    end
+  end
+
+  describe "hardening: resource release edge cases" do
+    setup do
+      # Match distributed tests: register enough capacity that a modest cost claim is visible.
+      SimpleResourceTracker.register(Node.self(), %{cpu: 4, memory: 2000})
+      :ok
+    end
+
+    test "stop/1 while items are in flight releases claims exactly once" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :work,
+          args: [:source],
+          code: &StreamHelpers.slow_identity/2,
+          extra_args: [200],
+          cost: %{cpu: 1, memory: 2000}
+        })
+
+      assert SimpleResourceTracker.available?(Node.self(), %{cpu: 1, memory: 2000})
+      {:ok, handle} = Handoff.stream(dag, nodes: [Node.self()])
+      refute SimpleResourceTracker.available?(Node.self(), %{memory: 100})
+
+      _ =
         Task.async(fn ->
           try do
-            handle |> Pipeline.stream() |> Enum.take(2)
+            handle |> Pipeline.stream() |> Enum.take(5)
           catch
-            :exit, _ -> :pipeline_exited
+            :exit, _ -> :ok
           end
         end)
 
@@ -854,16 +1157,42 @@ defmodule Handoff.PipelineTest do
       assert {:ok, _} = Pipeline.push(handle, 1)
       assert {:ok, _} = Pipeline.push(handle, 2)
 
-      assert_receive {:DOWN, ^ref, :process, ^stage, reason}, 2_000
+      assert :ok = Pipeline.stop(handle)
+      assert :ok = Pipeline.stop(handle)
 
-      message =
-        case reason do
-          {%RuntimeError{message: msg}, _} -> msg
-          {exception, _} when is_exception(exception) -> Exception.message(exception)
-          other -> inspect(other)
-        end
+      Process.sleep(50)
+      assert SimpleResourceTracker.available?(Node.self(), %{cpu: 1, memory: 2000})
+    end
 
-      assert message =~ "same-length" or message =~ "list of 2 results"
+    test "caller death stops the pipeline and releases claims" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :work,
+          args: [:source],
+          code: &StreamHelpers.identity/1,
+          cost: %{cpu: 1, memory: 2000}
+        })
+
+      parent = self()
+
+      caller =
+        spawn(fn ->
+          {:ok, handle} = Handoff.stream(dag, nodes: [Node.self()])
+          send(parent, {:handle, handle})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:handle, handle}, 2_000
+      refute SimpleResourceTracker.available?(Node.self(), %{memory: 100})
+
+      coord_ref = Process.monitor(handle.coordinator)
+      Process.exit(caller, :kill)
+
+      assert_receive {:DOWN, ^coord_ref, :process, _, _}, 2_000
+      Process.sleep(50)
+      assert SimpleResourceTracker.available?(Node.self(), %{cpu: 1, memory: 2000})
     end
   end
 end
