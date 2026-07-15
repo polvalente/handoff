@@ -4,6 +4,13 @@ defmodule Handoff do
 
   It provides tools for defining computation graphs, managing resources, and executing
   the graphs in a distributed environment.
+
+  ## Execution modes
+
+  * `execute/2` / `execute_distributed/2` — one-shot DAG run (task retries via `:max_retries`).
+  * `stream/2` — long-lived GenStage pipeline: warm stages with optional `:init`,
+    concurrent `Handoff.Pipeline.push/2`, ordered results via `Handoff.Pipeline.stream/1`.
+    Stream mode does not retry failed items; see `Handoff.Pipeline`.
   """
 
   @doc """
@@ -69,6 +76,27 @@ defmodule Handoff do
   def execute(dag, opts \\ []) do
     # Use DistributedExecutor, which handles local execution if no other nodes are present.
     Handoff.DistributedExecutor.execute(dag, opts)
+  end
+
+  @doc """
+  Starts a long-lived GenStage streaming pipeline for the given DAG.
+
+  Unlike `execute/2`, this compiles the DAG into warm stages once and returns a
+  pipeline handle immediately. Push items with `Handoff.Pipeline.push/2` and
+  consume ordered results with `Handoff.Pipeline.stream/1`.
+
+  Stream mode does **not** use `:max_retries`; per-item `:code` failures notify
+  the Aggregator directly as `{:error, reason}` (with one-hop suppress to
+  immediate consumers) and subsequent items continue. Optional opts
+  include `:join_timeout`, `:max_demand`, `:min_demand`, `:nodes`, and
+  `:resource_tracker` (see `Handoff.Pipeline`).
+
+  ## Returns
+  - `{:ok, %Handoff.Pipeline{}}` on success
+  - `{:error, reason}` on failure
+  """
+  def stream(dag, opts \\ []) do
+    Handoff.Pipeline.start(dag, opts)
   end
 
   @doc """

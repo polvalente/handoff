@@ -117,15 +117,8 @@ defmodule Handoff.DAG do
         })
   """
   def add_function(dag, %Function{} = function) do
-    case function.code do
-      {module, function} when is_atom(module) and is_atom(function) ->
-        :ok
-
-      code ->
-        if not is_function(code) or Elixir.Function.info(code)[:type] != :external do
-          raise ":code must be an fully qualified &Module.function/arity capture, got: #{inspect(code)}"
-        end
-    end
+    validate_code!(function)
+    validate_init!(function.init)
 
     # Expand Handoff.Function.Argument in args into synthetic nodes
     {dag, new_args} =
@@ -134,6 +127,33 @@ defmodule Handoff.DAG do
     # Replace args with rewritten args
     function = %{function | args: Enum.reverse(new_args)}
     put_in(dag.functions[function.id], function)
+  end
+
+  defp validate_code!(%{type: :input, code: nil}), do: :ok
+
+  defp validate_code!(%{code: code}) do
+    case code do
+      {module, fun} when is_atom(module) and is_atom(fun) ->
+        :ok
+
+      code ->
+        if not is_function(code) or Elixir.Function.info(code)[:type] != :external do
+          raise ":code must be an fully qualified &Module.function/arity capture, got: #{inspect(code)}"
+        end
+    end
+  end
+
+  defp validate_init!(nil), do: :ok
+
+  defp validate_init!({module, fun, args})
+       when is_atom(module) and is_atom(fun) and is_list(args) do
+    :ok
+  end
+
+  defp validate_init!(init) do
+    if not is_function(init) or Elixir.Function.info(init)[:type] != :external do
+      raise ":init must be an MFA {module, fun, args} or a fully qualified &Module.function/arity capture, got: #{inspect(init)}"
+    end
   end
 
   defp expand_argument_nodes(arg, {dag_acc, args_acc}, function) do
@@ -245,13 +265,39 @@ defmodule Handoff.DAG do
     end)
   end
 
-  defp validate_definition(function) do
-    if function.type == :inline and not is_nil(function.node) do
-      {:error, {:invalid_inline_function_node, function.id}}
-    else
-      :ok
+  defp validate_definition(%{type: :input} = function) do
+    cond do
+      function.args != [] ->
+        {:error, {:invalid_input_function, function.id}}
+
+      not is_nil(function.cost) ->
+        {:error, {:invalid_input_function, function.id}}
+
+      not is_nil(function.code) ->
+        {:error, {:invalid_input_function, function.id}}
+
+      not is_nil(function.init) ->
+        {:error, {:invalid_input_function, function.id}}
+
+      true ->
+        :ok
     end
   end
+
+  defp validate_definition(%{type: :inline} = function) do
+    cond do
+      not is_nil(function.node) ->
+        {:error, {:invalid_inline_function_node, function.id}}
+
+      not is_nil(function.init) ->
+        {:error, {:invalid_inline_function_init, function.id}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_definition(_function), do: :ok
 
   defp check_for_missing_dependencies(graph) do
     # Check for missing dependencies (vertices with label nil)
