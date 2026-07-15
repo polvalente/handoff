@@ -154,9 +154,8 @@ defmodule Handoff.Pipeline.Aggregator do
     if Enum.all?(state.sink_ids, &Map.has_key?(partial, &1)) do
       output = format_output(state, partial)
 
-      state
-      |> clear_join(cid)
-      |> then(fn st -> %{st | completed: Map.put(st.completed, cid, output)} end)
+      state = clear_join(state, cid)
+      state = %{state | completed: Map.put(state.completed, cid, output)}
     else
       %{state | join: Map.put(state.join, cid, partial)}
     end
