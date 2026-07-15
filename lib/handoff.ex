@@ -72,6 +72,21 @@ defmodule Handoff do
   end
 
   @doc """
+  Starts a long-lived GenStage streaming pipeline for the given DAG.
+
+  Unlike `execute/2`, this compiles the DAG into warm stages once and returns a
+  pipeline handle immediately. Push items with `Handoff.Pipeline.push/2` and
+  consume ordered results with `Handoff.Pipeline.stream/1`.
+
+  ## Returns
+  - `{:ok, %Handoff.Pipeline{}}` on success
+  - `{:error, reason}` on failure
+  """
+  def stream(dag, opts \\ []) do
+    Handoff.Pipeline.start(dag, opts)
+  end
+
+  @doc """
   Executes all functions in a DAG across multiple nodes, respecting dependencies.
 
   ## Parameters
