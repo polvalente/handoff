@@ -88,17 +88,8 @@ defmodule Handoff.Pipeline.Aggregator do
         {:noreply, [], state}
 
       {_partial, join} ->
-        state =
-          state
-          |> cancel_join_timer(cid)
-          |> then(fn st ->
-            %{
-              st
-              | join: Map.put(join, cid, :timed_out),
-                completed: Map.put(st.completed, cid, {:error, :join_timeout})
-            }
-          end)
-
+        state = cancel_join_timer(state, cid)
+        state = %{state | join: Map.put(join, cid, :timed_out), completed: Map.put(state.completed, cid, {:error, :join_timeout})}
         state = schedule_join_gc(state, cid)
         {emitted, state} = drain_ready(state, [])
         {:noreply, emitted, state}
