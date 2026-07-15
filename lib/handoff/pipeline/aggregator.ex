@@ -134,9 +134,8 @@ defmodule Handoff.Pipeline.Aggregator do
         state
 
       true ->
-        state
-        |> clear_join(cid)
-        |> then(fn st -> %{st | completed: Map.put(st.completed, cid, output)} end)
+        state = clear_join(state, cid)
+        %{state | completed: Map.put(state.completed, cid, output)}
     end
   end
 
