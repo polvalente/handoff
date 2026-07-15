@@ -284,13 +284,20 @@ defmodule Handoff.DAG do
     end
   end
 
-  defp validate_definition(function) do
-    if function.type == :inline and not is_nil(function.node) do
-      {:error, {:invalid_inline_function_node, function.id}}
-    else
-      :ok
+  defp validate_definition(%{type: :inline} = function) do
+    cond do
+      not is_nil(function.node) ->
+        {:error, {:invalid_inline_function_node, function.id}}
+
+      not is_nil(function.init) ->
+        {:error, {:invalid_inline_function_init, function.id}}
+
+      true ->
+        :ok
     end
   end
+
+  defp validate_definition(_function), do: :ok
 
   defp check_for_missing_dependencies(graph) do
     # Check for missing dependencies (vertices with label nil)

@@ -131,4 +131,19 @@ defmodule Handoff.DistributedTestFunctions do
     Process.sleep(sleep_ms)
     value
   end
+
+  @doc """
+  Returns `{Node.self(), value}` so streaming tests can assert stage placement.
+  """
+  def tag_with_node(value), do: {Node.self(), value}
+
+  @doc """
+  Doubles a value (named capture safe for remote stage invocation).
+  """
+  def double(value), do: value * 2
+
+  @doc """
+  Identity for remote streaming stages.
+  """
+  def identity(value), do: value
 end

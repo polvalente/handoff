@@ -6,6 +6,10 @@ defmodule Handoff.Pipeline.Stage do
   build persistent worker state, joins fan-in inputs by `correlation_id`, and
   invokes `:code` once per ready item (or once per batch when batching is on).
 
+  Dependencies of type `:inline` are not upstream GenStage producers: this stage
+  subscribes to their transitive non-inline leaves and evaluates the inline
+  `:code` when resolving args (same absorb-into-dependent model as batch execute).
+
   ## Parallelism
 
   When `function.parallelism` is greater than 1, this stage keeps a **single**
@@ -56,6 +60,7 @@ defmodule Handoff.Pipeline.Stage do
   def init(opts) do
     function = Keyword.fetch!(opts, :function)
     producers = Keyword.get(opts, :producers, [])
+    all_functions = Keyword.get(opts, :all_functions, %{function.id => function})
     parallelism = max(function.parallelism || 1, 1)
 
     {workers, worker_state} =
@@ -76,8 +81,15 @@ defmodule Handoff.Pipeline.Stage do
         {pid, max_demand: 10, min_demand: 1, dep_id: dep_id}
       end)
 
+    leaf_deps =
+      function.args
+      |> Enum.flat_map(&leaf_dep_ids(&1, all_functions))
+      |> Enum.uniq()
+
     state = %{
       function: function,
+      all_functions: all_functions,
+      leaf_deps: leaf_deps,
       worker_state: worker_state,
       workers: workers,
       join: %{},
@@ -153,8 +165,10 @@ defmodule Handoff.Pipeline.Stage do
     partial = Map.get(state.join, cid, %{})
     partial = Map.put(partial, dep_id, value)
 
-    if ready?(state.function.args, partial) do
-      args = Enum.map(state.function.args, &Map.fetch!(partial, &1))
+    if ready?(state.leaf_deps, partial) do
+      args =
+        Enum.map(state.function.args, &resolve_arg(&1, partial, state.all_functions))
+
       state = %{state | join: Map.delete(state.join, cid)}
       dispatch(state, cid, args)
     else
@@ -217,8 +231,29 @@ defmodule Handoff.Pipeline.Stage do
     %{state | batch_timer: nil}
   end
 
-  defp ready?(args, partial) do
-    Enum.all?(args, &Map.has_key?(partial, &1))
+  defp ready?(leaf_deps, partial) do
+    Enum.all?(leaf_deps, &Map.has_key?(partial, &1))
+  end
+
+  defp leaf_dep_ids(dep_id, all_functions) do
+    case Map.fetch!(all_functions, dep_id) do
+      %{type: :inline} = inline ->
+        Enum.flat_map(inline.args, &leaf_dep_ids(&1, all_functions))
+
+      _other ->
+        [dep_id]
+    end
+  end
+
+  defp resolve_arg(dep_id, partial, all_functions) do
+    case Map.fetch!(all_functions, dep_id) do
+      %{type: :inline} = inline ->
+        inline_args = Enum.map(inline.args, &resolve_arg(&1, partial, all_functions))
+        apply_code(inline.code, inline_args ++ inline.extra_args)
+
+      _other ->
+        Map.fetch!(partial, dep_id)
+    end
   end
 
   defp invoke(%{init: nil} = function, _worker_state, args) do

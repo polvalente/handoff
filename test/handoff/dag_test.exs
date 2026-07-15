@@ -91,6 +91,34 @@ defmodule Handoff.DAGTest do
       assert dag.functions[:source] == function
       assert :ok == DAG.validate(dag)
     end
+
+    test "rejects :inline with :init" do
+      dag =
+        DAG.add_function(DAG.new(), %Function{
+          id: :inline_with_init,
+          args: [],
+          type: :inline,
+          code: &Elixir.Function.identity/1,
+          extra_args: [1],
+          init: {Elixir.Function, :identity, []}
+        })
+
+      assert {:error, {:invalid_inline_function_init, :inline_with_init}} = DAG.validate(dag)
+    end
+
+    test "rejects :inline with :node" do
+      dag =
+        DAG.add_function(DAG.new(), %Function{
+          id: :inline_with_node,
+          args: [],
+          type: :inline,
+          node: Node.self(),
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
+        })
+
+      assert {:error, {:invalid_inline_function_node, :inline_with_node}} = DAG.validate(dag)
+    end
   end
 
   describe "validate/1" do

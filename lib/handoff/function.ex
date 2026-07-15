@@ -15,6 +15,11 @@ defmodule Handoff.Function do
   * `:cost` - Optional resource requirements map (e.g., %{cpu: 2, memory: 1000})
   * `:extra_args` - Additional arguments provided at execution time
   * `:type` - Type of the function: `:regular`, `:inline`, or `:input`
+    * `:regular` - Normal node (allocated/executed as its own stage or task)
+    * `:inline` - Absorbed into dependents: never scheduled alone; re-evaluated
+      whenever a dependent needs it (batch and streaming). Must not set `:node`
+      or `:init`.
+    * `:input` - Streaming source placeholder (`code: nil`); values via `push/2`
   * `:max_retries` - Optional per-function retry override (`nil` inherits the
     execute-level `:max_retries`, default 3). Use `0` for no retries.
   * `:argument_inclusion` - One of :variadic or :as_list (defaults to :variadic)
@@ -23,6 +28,7 @@ defmodule Handoff.Function do
   * `:init` - Optional one-time setup for streaming (`Handoff.stream/2`). Must be an
     MFA `{module, fun, args}` or a named `&Module.function/arity` capture — never an
     anonymous function. Run once per stage worker; ignored by `Handoff.execute/2`.
+    Not allowed on `:inline` or `:input` functions.
   * `:parallelism` - Number of concurrent stage-worker replicas when streaming
     (default `1`). Ignored by `Handoff.execute/2`.
   * `:batch_size` / `:batch_timeout` - Optional batching controls for streaming stages.

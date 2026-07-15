@@ -208,6 +208,123 @@ defmodule Handoff.PipelineTest do
     end
   end
 
+  describe "inline absorption" do
+    test "does not start a stage for :inline nodes and evaluates them in dependents" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :times_two,
+          args: [:source],
+          type: :inline,
+          code: &StreamHelpers.double/1
+        })
+        |> DAG.add_function(%Function{
+          id: :out,
+          args: [:times_two],
+          code: &StreamHelpers.identity/1
+        })
+
+      assert {:ok, handle} = Pipeline.start(dag)
+      refute Map.has_key?(handle.stages, :times_two)
+      assert Map.has_key?(handle.stages, :source)
+      assert Map.has_key?(handle.stages, :out)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(3)
+        end)
+
+      Enum.each([1, 2, 3], fn v ->
+        assert {:ok, _} = Pipeline.push(handle, v)
+      end)
+
+      assert Task.await(collect) == [2, 4, 6]
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "re-evaluates inline once per dependent" do
+      {:ok, agent} = Agent.start_link(fn -> %{count: 0} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :counted,
+          args: [:source],
+          type: :inline,
+          code: &Handoff.DistributedTestFunctions.counting_identity_function/2,
+          extra_args: [agent]
+        })
+        |> DAG.add_function(%Function{
+          id: :left,
+          args: [:counted],
+          code: &StreamHelpers.double/1
+        })
+        |> DAG.add_function(%Function{
+          id: :right,
+          args: [:counted],
+          code: &StreamHelpers.triple/1
+        })
+        |> DAG.add_function(%Function{
+          id: :sink,
+          args: [:left, :right],
+          code: &StreamHelpers.pair/2
+        })
+
+      assert {:ok, handle} = Pipeline.start(dag)
+      refute Map.has_key?(handle.stages, :counted)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(1)
+        end)
+
+      assert {:ok, _} = Pipeline.push(handle, 5)
+      assert Task.await(collect) == [{10, 15}]
+      assert Agent.get(agent, & &1.count) == 2
+
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "resolves nested inlines through leaf producers" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :inner,
+          args: [:source],
+          type: :inline,
+          code: &StreamHelpers.double/1
+        })
+        |> DAG.add_function(%Function{
+          id: :outer,
+          args: [:inner],
+          type: :inline,
+          code: &StreamHelpers.triple/1
+        })
+        |> DAG.add_function(%Function{
+          id: :out,
+          args: [:outer],
+          code: &StreamHelpers.identity/1
+        })
+
+      assert {:ok, handle} = Pipeline.start(dag)
+      refute Map.has_key?(handle.stages, :inner)
+      refute Map.has_key?(handle.stages, :outer)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(1)
+        end)
+
+      assert {:ok, _} = Pipeline.push(handle, 2)
+      # double then triple: 2 * 2 * 3 = 12
+      assert Task.await(collect) == [12]
+      assert :ok = Pipeline.stop(handle)
+    end
+  end
+
   describe "setup once, process many" do
     test "init runs exactly once while N items are processed in push order" do
       {:ok, agent} = Agent.start_link(fn -> %{init_count: 0, payload: 10} end)
