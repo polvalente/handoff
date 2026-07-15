@@ -74,6 +74,10 @@ defmodule Handoff.Pipeline.Coordinator do
   end
 
   @impl true
+  def handle_info({:EXIT, _pid, reason}, state) when reason in [:normal, :shutdown] do
+    {:noreply, state}
+  end
+
   def handle_info({:EXIT, _pid, reason}, state) do
     {:stop, reason, state}
   end

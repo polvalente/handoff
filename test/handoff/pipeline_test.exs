@@ -16,10 +16,20 @@ defmodule Handoff.PipelineTest do
       {state * value, state}
     end
 
+    def transform_and_notify(state, value, test_pid) do
+      send(test_pid, {:transformed, self(), value})
+      {state * value, state}
+    end
+
     def double(value), do: value * 2
     def triple(value), do: value * 3
     def pair(a, b), do: {a, b}
     def identity(value), do: value
+
+    def slow_identity(value, delay_ms) do
+      Process.sleep(delay_ms)
+      value
+    end
 
     def notify_and_wait_double(value, test_pid, function_id) do
       send(test_pid, {:started, function_id, self()})
@@ -295,6 +305,176 @@ defmodule Handoff.PipelineTest do
 
       refute Process.alive?(handle.coordinator)
       Enum.each(stage_pids, fn pid -> refute Process.alive?(pid) end)
+    end
+  end
+
+  describe "parallelism" do
+    alias Handoff.Pipeline.Stage
+
+    test "starts N workers each running :init once" do
+      test_pid = self()
+      {:ok, agent} = Agent.start_link(fn -> %{init_count: 0, payload: 10} end)
+
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :scale,
+          args: [:source],
+          parallelism: 4,
+          init: {__MODULE__.StreamHelpers, :load_store, [agent]},
+          code: &StreamHelpers.transform_and_notify/3,
+          extra_args: [test_pid]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      workers = Stage.worker_pids(handle.stages[:scale])
+
+      assert length(workers) == 4
+      assert Enum.all?(workers, &Process.alive?/1)
+      assert Agent.get(agent, & &1.init_count) == 4
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(8)
+        end)
+
+      # Push 0..7 so every worker gets two items under rem(cid, 4) partitioning
+      inputs = Enum.to_list(0..7)
+
+      pushes =
+        Enum.map(inputs, fn v ->
+          assert {:ok, cid} = Pipeline.push(handle, v)
+          {cid, v}
+        end)
+
+      assert Task.await(collect, 2_000) == Enum.map(inputs, &(&1 * 10))
+      assert Agent.get(agent, & &1.init_count) == 4
+
+      # The rem(cid, 4) partitioning means effectively a round-robin worker
+      # load balancing. We assert on this via Stream.cycle zipping.
+      Enum.zip_with(pushes, Stream.cycle(workers), fn {_cid, value}, expected_worker ->
+        assert_receive {:transformed, ^expected_worker, ^value}, 1_000
+      end)
+
+      refute_received {:transformed, _, _}
+
+      assert :ok = Pipeline.stop(handle)
+      Process.sleep(50)
+      Enum.each(workers, fn pid -> refute Process.alive?(pid) end)
+    end
+
+    test "fan-in with parallel sink does not double-fire or lose deps" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :left,
+          args: [:source],
+          code: &StreamHelpers.double/1
+        })
+        |> DAG.add_function(%Function{
+          id: :right,
+          args: [:source],
+          code: &StreamHelpers.triple/1
+        })
+        |> DAG.add_function(%Function{
+          id: :sink,
+          args: [:left, :right],
+          parallelism: 4,
+          code: &StreamHelpers.pair/2
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+      assert length(Stage.worker_pids(handle.stages[:sink])) == 4
+
+      inputs = [3, 1, 4, 2, 5, 9, 6, 8]
+      n = length(inputs)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(n)
+        end)
+
+      Enum.each(inputs, fn value -> assert {:ok, _} = Pipeline.push(handle, value) end)
+
+      assert Task.await(collect, 2_000) == Enum.map(inputs, &{&1 * 2, &1 * 3})
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "aggregator output order matches push order with parallelism > 1" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+        |> DAG.add_function(%Function{
+          id: :slow,
+          args: [:source],
+          parallelism: 4,
+          code: &StreamHelpers.slow_identity/2,
+          extra_args: [30]
+        })
+
+      {:ok, handle} = Pipeline.start(dag)
+
+      # Non-monotonic values so order is not confused with sorted-by-value
+      inputs = [3, 1, 4, 1, 5, 9, 2, 6]
+      n = length(inputs)
+
+      collect =
+        Task.async(fn ->
+          handle |> Pipeline.stream() |> Enum.take(n)
+        end)
+
+      Process.sleep(20)
+
+      Enum.each(inputs, fn value -> assert {:ok, _} = Pipeline.push(handle, value) end)
+
+      assert Task.await(collect, 5_000) == inputs
+      assert :ok = Pipeline.stop(handle)
+    end
+
+    test "throughput improves with parallelism > 1 under concurrent load" do
+      delay_ms = 80
+      n = 8
+
+      time_pipeline = fn parallelism ->
+        dag =
+          DAG.new()
+          |> DAG.add_function(%Function{id: :source, args: [], code: nil, type: :input})
+          |> DAG.add_function(%Function{
+            id: :slow,
+            args: [:source],
+            parallelism: parallelism,
+            code: &StreamHelpers.slow_identity/2,
+            extra_args: [delay_ms]
+          })
+
+        {:ok, handle} = Pipeline.start(dag)
+
+        collect =
+          Task.async(fn ->
+            handle |> Pipeline.stream() |> Enum.take(n)
+          end)
+
+        Process.sleep(20)
+
+        {micros, outputs} =
+          :timer.tc(fn ->
+            Enum.each(1..n, fn i -> assert {:ok, _} = Pipeline.push(handle, i) end)
+            Task.await(collect, 30_000)
+          end)
+
+        assert outputs == Enum.to_list(1..n)
+        assert :ok = Pipeline.stop(handle)
+        micros
+      end
+
+      serial_us = time_pipeline.(1)
+      parallel_us = time_pipeline.(4)
+
+      # Serial is ~n*delay; parallel with 4 workers should be clearly faster
+      assert parallel_us < serial_us * 0.7,
+             "expected parallelism=4 (#{parallel_us}µs) to beat parallelism=1 (#{serial_us}µs)"
     end
   end
 end

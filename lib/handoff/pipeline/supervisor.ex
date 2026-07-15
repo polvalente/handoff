@@ -18,6 +18,16 @@ defmodule Handoff.Pipeline.Supervisor do
   Starts a pipeline coordinator for the given DAG.
   """
   def start_coordinator(dag, opts \\ []) do
-    DynamicSupervisor.start_child(__MODULE__, {Handoff.Pipeline.Coordinator, {dag, opts}})
+    spec = %{
+      id: make_ref(),
+      start: {Handoff.Pipeline.Coordinator, :start_link, [{dag, opts}]},
+      # Pipelines are caller-owned; do not restart a dead coordinator (would
+      # rebuild a disconnected stage tree and can trip supervisor intensity).
+      restart: :temporary,
+      shutdown: 5_000,
+      type: :worker
+    }
+
+    DynamicSupervisor.start_child(__MODULE__, spec)
   end
 end
