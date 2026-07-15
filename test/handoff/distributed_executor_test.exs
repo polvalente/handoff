@@ -879,8 +879,8 @@ defmodule Handoff.DistributedExecutorTest do
           extra_args: ["An error occurred"]
         })
 
-      {:ok, %{results: %{error: {:error, error_message}}}} =
-        DistributedExecutor.execute(dag_with_functions)
+      assert {:error, {:function_failed, :error, error_message}} =
+               DistributedExecutor.execute(dag_with_functions, max_retries: 0)
 
       assert String.contains?(error_message, "An error occurred, value: 1")
     end

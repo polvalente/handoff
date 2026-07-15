@@ -14,6 +14,8 @@ defmodule Handoff.Function do
   * `:cost` - Optional resource requirements map (e.g., %{cpu: 2, memory: 1000})
   * `:extra_args` - Additional arguments provided at execution time
   * `:type` - Type of the function, :regular or :inline
+  * `:max_retries` - Optional per-function retry override (`nil` inherits the
+    execute-level `:max_retries`, default 3). Use `0` for no retries.
   * `:argument_inclusion` - One of :variadic or :as_list (defaults to :variadic)
     * `:variadic` - Pass the list of N arguments as the first N arguments to the function
     * `:as_list` - Pass arguments as a list in the first argument to the function
@@ -81,6 +83,8 @@ defmodule Handoff.Function do
     extra_args: [],
     # Type of the function, :regular or :inline
     type: :regular,
+    # Optional per-function retry override; nil inherits execute-level default
+    max_retries: nil,
     # How to arguments are passed into :code
     argument_inclusion: :variadic
   ]
@@ -94,6 +98,7 @@ defmodule Handoff.Function do
           cost: map() | nil,
           extra_args: list(),
           type: :regular | :inline,
+          max_retries: non_neg_integer() | nil,
           argument_inclusion: :variadic | :as_list
         }
 end

@@ -52,24 +52,6 @@ defmodule Handoff.DistributedTestFunctions do
   end
 
   @doc """
-  Sleeps for the specified duration and returns the value.
-  Used for testing parallel execution timing for functions with no dependencies.
-  """
-  def sleep_and_return(value, sleep_ms) do
-    Process.sleep(sleep_ms)
-    value
-  end
-
-  @doc """
-  Receives a dependency result, sleeps, and returns the given value.
-  Used for testing parallel execution timing for functions with one dependency.
-  """
-  def sleep_with_dep_and_return(_dep_result, value, sleep_ms) do
-    Process.sleep(sleep_ms)
-    value
-  end
-
-  @doc """
   Sends a message to the test process when execution starts, waits for acknowledgment,
   then returns the value. Used for message-passing based parallelism tests.
 
@@ -123,6 +105,23 @@ defmodule Handoff.DistributedTestFunctions do
     Process.sleep(10)
     send(test_pid, {:completed, function_id})
     value
+  end
+
+  @doc """
+  Notifies start then exits abnormally. Used for worker-crash tests.
+  """
+  def crash_after_notify(test_pid, function_id) do
+    send(test_pid, {:started, function_id, self()})
+    Process.sleep(10)
+    raise "intentional worker crash"
+  end
+
+  @doc """
+  Always raises after incrementing an agent counter. Used for retry-exhaustion tests.
+  """
+  def always_failing_function(_x, agent) do
+    Agent.update(agent, fn state -> %{state | count: state.count + 1} end)
+    raise "always fails"
   end
 
   @doc """
