@@ -30,6 +30,67 @@ defmodule Handoff.DAGTest do
       assert Map.has_key?(updated_dag.functions, :func1)
       assert updated_dag.functions[:func1] == function
     end
+
+    test "defaults streaming fields on Function struct" do
+      function = %Function{
+        id: :func1,
+        args: [],
+        code: &Elixir.Function.identity/1
+      }
+
+      assert function.init == nil
+      assert function.parallelism == 1
+      assert function.batch_size == nil
+      assert function.batch_timeout == nil
+    end
+
+    test "accepts named-capture and MFA :init" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{
+          id: :with_capture_init,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1],
+          init: &Elixir.Function.identity/1
+        })
+        |> DAG.add_function(%Function{
+          id: :with_mfa_init,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [2],
+          init: {Elixir.Function, :identity, []}
+        })
+
+      assert Map.has_key?(dag.functions, :with_capture_init)
+      assert Map.has_key?(dag.functions, :with_mfa_init)
+    end
+
+    test "rejects anonymous-function :init" do
+      assert_raise RuntimeError, ~r/:init must be/, fn ->
+        DAG.add_function(DAG.new(), %Function{
+          id: :bad_init,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1],
+          init: fn -> :ok end
+        })
+      end
+    end
+
+    test "accepts type: :input with nil code" do
+      function = %Function{
+        id: :source,
+        args: [],
+        code: nil,
+        type: :input
+      }
+
+      dag = DAG.add_function(DAG.new(), function)
+
+      assert dag.functions[:source] == function
+      assert :ok == DAG.validate(dag)
+    end
   end
 
   describe "validate/1" do
@@ -105,6 +166,42 @@ defmodule Handoff.DAGTest do
 
       assert {:error, {:cyclic_dependency, cycle}} = DAG.validate(dag)
       assert Enum.sort(cycle) == [:func2, :func3]
+    end
+
+    test "rejects type: :input with non-empty args" do
+      dag =
+        DAG.new()
+        |> DAG.add_function(%Function{
+          id: :dep,
+          args: [],
+          code: &Elixir.Function.identity/1,
+          extra_args: [1]
+        })
+        |> DAG.add_function(%Function{
+          id: :source,
+          args: [:dep],
+          code: nil,
+          type: :input
+        })
+
+      assert {:error, {:invalid_input_function, :source}} = DAG.validate(dag)
+    end
+
+    test "rejects type: :input with non-nil cost, code, or init" do
+      for attrs <- [
+            [cost: %{cpu: 1}],
+            [code: &Elixir.Function.identity/1],
+            [init: {Elixir.Function, :identity, []}]
+          ] do
+        function =
+          struct!(
+            %Function{id: :source, args: [], code: nil, type: :input},
+            attrs
+          )
+
+        dag = DAG.add_function(DAG.new(), function)
+        assert {:error, {:invalid_input_function, :source}} = DAG.validate(dag)
+      end
     end
   end
 

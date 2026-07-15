@@ -38,6 +38,8 @@ defmodule Handoff.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:gen_stage, "~> 1.2"},
+
       # Development and testing dependencies
       {:ex_doc, "~> 0.29.1", only: :docs, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

@@ -21,3 +21,4 @@ handoff-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+/.work/

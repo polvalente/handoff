@@ -8,17 +8,34 @@ defmodule Handoff.Function do
 
   * `:id` - A unique identifier for the function (any term, typically an atom)
   * `:args` - A list of other function IDs whose results this function depends on
-  * `:code` - The actual function to execute, receives results of dependencies as input
+  * `:code` - The actual function to execute, receives results of dependencies as input.
+    May be `nil` only for `type: :input` nodes (values supplied via the streaming pipeline).
   * `:results` - Storage for function output after execution
   * `:node` - Optional node assignment for distributed execution
   * `:cost` - Optional resource requirements map (e.g., %{cpu: 2, memory: 1000})
   * `:extra_args` - Additional arguments provided at execution time
-  * `:type` - Type of the function, :regular or :inline
+  * `:type` - Type of the function: `:regular`, `:inline`, or `:input`
   * `:max_retries` - Optional per-function retry override (`nil` inherits the
     execute-level `:max_retries`, default 3). Use `0` for no retries.
   * `:argument_inclusion` - One of :variadic or :as_list (defaults to :variadic)
     * `:variadic` - Pass the list of N arguments as the first N arguments to the function
     * `:as_list` - Pass arguments as a list in the first argument to the function
+  * `:init` - Optional one-time setup for streaming (`Handoff.stream/2`). Must be an
+    MFA `{module, fun, args}` or a named `&Module.function/arity` capture — never an
+    anonymous function. Run once per stage worker; ignored by `Handoff.execute/2`.
+  * `:parallelism` - Number of concurrent stage-worker replicas when streaming
+    (default `1`). Ignored by `Handoff.execute/2`.
+  * `:batch_size` / `:batch_timeout` - Optional batching controls for streaming stages.
+    Ignored by `Handoff.execute/2`.
+
+  ## Streaming calling convention
+
+  When `:init` is set and the function runs via `Handoff.stream/2`, `:code` receives
+  the worker state as its first argument and must return `{result, new_state}`:
+
+      code.(state, arg1, ..., argN)  # or code.(state, [args]) for `:as_list`
+
+  When `:init` is `nil`, `:code` keeps the stateless signature used by `Handoff.execute/2`.
 
   ## Examples
 
@@ -51,6 +68,14 @@ defmodule Handoff.Function do
     extra_args: [label: "Inspect result"],
     cost: %{cpu: 1, memory: 500} # Adjusted cost for a simple inspect
   }
+
+  # An input placeholder for streaming pipelines (value supplied per item via push)
+  %Handoff.Function{
+    id: :source,
+    args: [],
+    code: nil,
+    type: :input
+  }
   ```
 
   ## Resource Costs
@@ -71,7 +96,7 @@ defmodule Handoff.Function do
     :id,
     # List of function IDs whose results are needed as inputs
     :args,
-    # Function to execute when dependencies are satisfied
+    # Function to execute when dependencies are satisfied (`nil` only for `:input`)
     :code,
     # Storage for function results after execution
     :results,
@@ -81,25 +106,37 @@ defmodule Handoff.Function do
     :cost,
     # Additional arguments provided at execution time
     extra_args: [],
-    # Type of the function, :regular or :inline
+    # Type of the function: :regular, :inline, or :input
     type: :regular,
     # Optional per-function retry override; nil inherits execute-level default
     max_retries: nil,
     # How to arguments are passed into :code
-    argument_inclusion: :variadic
+    argument_inclusion: :variadic,
+    # One-time setup for streaming stage workers (MFA or named capture)
+    init: nil,
+    # Concurrent stage-worker replicas for streaming (ignored by execute/2)
+    parallelism: 1,
+    # Optional streaming batch size
+    batch_size: nil,
+    # Optional streaming batch timeout
+    batch_timeout: nil
   ]
 
   @type t :: %__MODULE__{
           id: term(),
           args: [term() | Handoff.Function.Argument.t()],
-          code: function(),
+          code: function() | {module(), atom()} | nil,
           results: term() | nil,
           node: node() | nil,
           cost: map() | nil,
           extra_args: list(),
-          type: :regular | :inline,
+          type: :regular | :inline | :input,
           max_retries: non_neg_integer() | nil,
-          argument_inclusion: :variadic | :as_list
+          argument_inclusion: :variadic | :as_list,
+          init: nil | {module(), atom(), [term()]} | function(),
+          parallelism: pos_integer(),
+          batch_size: pos_integer() | nil,
+          batch_timeout: non_neg_integer() | nil
         }
 end
 
