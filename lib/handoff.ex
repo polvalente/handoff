@@ -21,42 +21,6 @@ defmodule Handoff do
   end
 
   @doc """
-  Starts the Handoff supervision tree.
-
-  The resource tracker can be configured via application config:
-  ```
-  config :handoff, resource_tracker: MyResourceTracker
-  ```
-
-  Or overridden via opts for backward compatibility:
-  ```
-  Handoff.start(resource_tracker: MyResourceTracker)
-  ```
-
-  Must be called before executing any DAGs.
-  Returns the supervisor pid and the resource tracker pid or name.
-  """
-  def start(opts \\ []) do
-    resource_tracker =
-      Keyword.get(opts, :resource_tracker) ||
-        Application.get_env(:handoff, :resource_tracker, Handoff.SimpleResourceTracker)
-
-    tracker =
-      case resource_tracker do
-        mod when is_atom(mod) ->
-          # Start the tracker if it's a module
-          {:ok, pid} = mod.start_link([])
-          pid
-
-        pid when is_pid(pid) or is_atom(pid) ->
-          pid
-      end
-
-    {:ok, sup_pid} = Handoff.Supervisor.start_link(Keyword.put(opts, :resource_tracker, tracker))
-    {:ok, sup_pid, tracker}
-  end
-
-  @doc """
   Executes all functions in a DAG, respecting dependencies.
 
   ## Parameters

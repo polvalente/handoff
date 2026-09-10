@@ -16,8 +16,8 @@ Mix.install([
   {:handoff, path: Path.join(__DIR__, "..")}
 ])
 
-# `Mix.install` starts the `:handoff` application (supervisors + tracker).
-# Do not call `Handoff.start/0` here — it would hit `{:already_started, _}`.
+# `Mix.install` starts the `:handoff` application (supervisors + tracker),
+# so there is nothing to start by hand.
 ```
 
 ```elixir
