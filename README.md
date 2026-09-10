@@ -89,10 +89,9 @@ Once a DAG is constructed and validated, you can execute it. Handoff's `Distribu
 ```elixir
 # (Assuming dag from the previous example is validated and :ok)
 
-# Ensure Handoff application is started (typically in your application.ex)
-# For scripts or Livebooks, you might need:
-# {:ok, _pid} = Handoff.start_link() # Or Handoff.Application.start(:normal, [])
-# Handoff.register_node(Node.self(), %{cpu: 2, memory: 1024}) # Example capabilities
+# The :handoff application starts its supervision tree on boot, so there is
+# nothing to start by hand. Register the node's capabilities before executing:
+# Handoff.register_node(Node.self(), %{cpu: 2, memory: 1024})
 
 case Handoff.DistributedExecutor.execute(dag) do
   {:ok, results_map} ->
@@ -137,8 +136,6 @@ Pipeline.stop(handle)
 
 See `livebooks/streaming_pipeline.livemd` for a fuller setup-once / process-many example. Stream mode does not retry failed items (`:max_retries` is execute-only).
 
-<!-- TODO: Add note about starting Handoff application if not already running -->
-
 ### Distributed Execution
 
 Handoff is designed to distribute DAG execution across multiple Erlang nodes. To enable this, you need to:
@@ -151,9 +148,8 @@ Handoff is designed to distribute DAG execution across multiple Erlang nodes. To
 Here's a conceptual example. We'll reuse `MyTasks.format_output/1` and imagine a `MyDistributedTasks` module:
 
 ```elixir
-# On all participating nodes:
-# Ensure Handoff application is started (e.g., in application.ex or manually)
-# Handoff.Application.start(:normal, []) # Or Handoff.start_link()
+# On all participating nodes the :handoff application starts its supervision
+# tree on boot, so each node only has to register itself.
 
 # Register node capabilities (example for one node)
 # This would typically be done on each node with its specific resources.

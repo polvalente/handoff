@@ -414,13 +414,8 @@ defmodule DistributedImageProcessing do
   Run the distributed image processing pipeline.
   """
   def run do
-    # Start Handoff application if not already running
-    if GenServer.whereis(DistributedExecutor) == nil do
-      {:ok, _pid} = Handoff.start_link()
-      Logger.info("Handoff Application started.")
-    else
-      Logger.info("Handoff Application already running.")
-    end
+    # `Mix.install` starts the `:handoff` application, so there is nothing to
+    # start by hand.
 
     # Register the local node with capabilities
     # In a real multi-node setup, each node would do this.
