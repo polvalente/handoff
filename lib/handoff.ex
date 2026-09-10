@@ -98,14 +98,12 @@ defmodule Handoff do
   - Same as `Handoff.execute/2`.
   """
   def execute_local(dag, opts \\ []) do
-    # Prefer a simpler topo-sort + reduce strategy for purely local execution.
-    dag =
-      update_in(dag, [Access.key(:functions), Access.all()], fn {id, func} ->
-        modified_func = %{func | node: Node.self(), cost: nil}
-        {id, modified_func}
+    functions =
+      Map.new(dag.functions, fn {id, function} ->
+        {id, %{function | node: Node.self(), cost: nil}}
       end)
 
-    Handoff.DistributedExecutor.execute(dag, opts)
+    Handoff.DistributedExecutor.execute(%{dag | functions: functions}, opts)
   end
 
   @doc """

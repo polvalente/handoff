@@ -1,6 +1,8 @@
 defmodule Handoff.ResultStoreTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Handoff.DataLocationRegistry
   alias Handoff.ResultStore
 
@@ -67,6 +69,20 @@ defmodule Handoff.ResultStoreTest do
       DataLocationRegistry.register(@dag_id_b, :nonexistent, Node.self())
 
       assert {:error, :not_found} = ResultStore.fetch_remote(@dag_id_a, :nonexistent)
+    end
+  end
+
+  describe "logging" do
+    test "reading a value does not log the stored results" do
+      :ok = ResultStore.store(@dag_id_a, :item1, "a stored payload")
+
+      previous_level = Logger.level()
+      Logger.configure(level: :debug)
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+
+      log = capture_log(fn -> assert {:ok, _} = ResultStore.get(@dag_id_a, :item1) end)
+
+      refute log =~ "a stored payload"
     end
   end
 end
