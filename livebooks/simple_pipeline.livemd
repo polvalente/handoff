@@ -104,18 +104,11 @@ defmodule PipelineTasks do
 end
 ```
 
-## Starting Handoff
+## Registering the Local Node
 
 ```elixir
-# Ensure Handoff application is started
-# In a real application, this is usually in your application.ex.
-# For scripts/Livebooks, start it manually if not already running.
-if GenServer.whereis(Handoff.DistributedExecutor) == nil do
-  {:ok, _pid} = Handoff.start_link() # Or Handoff.Application.start(:normal, [])
-  IO.puts "Handoff Application started."
-else
-  IO.puts "Handoff Application already running."
-end
+# `Mix.install` above starts the `:handoff` application, so there is nothing
+# to start by hand.
 
 # Register the local node with some default capabilities for local execution
 # This allows DistributedExecutor to find and use the current node.
