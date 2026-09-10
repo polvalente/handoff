@@ -132,10 +132,10 @@ end
 If you need more advanced tracking (e.g., persistent, distributed, or dynamic resource management), you can implement the `Handoff.ResourceTracker` behaviour and provide your own tracker module.
 
 - **Configuring the Resource Tracker:**
-  You can specify which resource tracker to use by passing the `:resource_tracker` option to `Handoff.start/1`:
-  
+  You can specify which resource tracker to use through application config:
+
   ```elixir
-  Handoff.start(resource_tracker: MyApp.CustomResourceTracker)
+  config :handoff, resource_tracker: MyApp.CustomResourceTracker
   ```
   If not specified, the default is `Handoff.SimpleResourceTracker`.
 
