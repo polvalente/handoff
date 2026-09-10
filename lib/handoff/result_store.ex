@@ -145,7 +145,6 @@ defmodule Handoff.ResultStore do
 
   @impl true
   def init(_) do
-    Logger.info("ResultStore init: #{inspect({self(), Node.self()})}")
     table = :ets.new(:handoff_results, [:set, :private, :named_table, read_concurrency: true])
     {:ok, %{table: table}}
   end
@@ -158,8 +157,6 @@ defmodule Handoff.ResultStore do
 
   @impl true
   def handle_call({:get, dag_id, id}, _from, state) do
-    Logger.info("ResultStore get: #{inspect(:ets.tab2list(state.table))}")
-
     result =
       case :ets.lookup(state.table, {dag_id, id}) do
         [{{^dag_id, ^id}, value}] -> {:ok, value}
